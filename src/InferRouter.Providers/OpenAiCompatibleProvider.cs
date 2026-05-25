@@ -14,6 +14,141 @@
    limitations under the License.
 */
 
+using System.Diagnostics;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using InferRouter.Core.Config;
+using InferRouter.Core.Domain;
+using InferRouter.Core.Interfaces;
+
 namespace InferRouter.Providers;
 
-// TODO
+public class OpenAiCompatibleProvider : ILlmProvider
+{
+    private readonly ProviderConfig _config;
+    private readonly string? _apiKey;
+    private readonly HttpClient _httpClient;
+
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+    };
+
+    public string Name => _config.Name;
+    public ProviderType Type => ProviderType.OpenAiCompatible;
+
+    public OpenAiCompatibleProvider(ProviderConfig config, string? apiKey, HttpClient httpClient)
+    {
+        _config = config;
+        _apiKey = apiKey;
+        _httpClient = httpClient;
+    }
+
+    public async Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct)
+    {
+        if (_apiKey is null)
+            throw new ProviderException(401, "missing_api_key", _config.ErrorMappings);
+
+        var body = new ChatCompletionRequest
+        {
+            Model = request.Model ?? _config.Model ?? "",
+            Messages = request.Messages
+                .Select(m => new ChatRequestMessage { Role = m.Role, Content = m.Content })
+                .ToList(),
+            MaxTokens = request.MaxTokens,
+            Temperature = request.Temperature
+        };
+
+        var json = JsonSerializer.Serialize(body, SerializerOptions);
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{_config.BaseUrl}/chat/completions")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+
+        var sw = Stopwatch.StartNew();
+        var response = await _httpClient.SendAsync(httpRequest, ct);
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+        sw.Stop();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorCode = ExtractErrorCode(responseBody, _config.ErrorCodePath);
+            throw new ProviderException((int)response.StatusCode, errorCode, _config.ErrorMappings);
+        }
+
+        var chatResponse = JsonSerializer.Deserialize<ChatCompletionResponse>(responseBody, SerializerOptions)
+            ?? throw new ProviderException((int)response.StatusCode, null, _config.ErrorMappings, "Empty response from provider");
+
+        return new InferResult(
+            RequestId: request.RequestId,
+            ProviderName: _config.Name,
+            Model: chatResponse.Model,
+            Content: chatResponse.Choices[0].Message.Content,
+            PromptTokens: chatResponse.Usage.PromptTokens,
+            CompletionTokens: chatResponse.Usage.CompletionTokens,
+            LatencyMs: sw.ElapsedMilliseconds,
+            WasFallback: false
+        );
+    }
+
+    private static string? ExtractErrorCode(string body, string path)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var parts = path.Split('.');
+            var current = doc.RootElement;
+            foreach (var part in parts)
+            {
+                if (!current.TryGetProperty(part, out current))
+                    return null;
+            }
+            return current.ValueKind == JsonValueKind.String ? current.GetString() : current.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private class ChatCompletionRequest
+    {
+        public string Model { get; set; } = "";
+        public List<ChatRequestMessage> Messages { get; set; } = [];
+        public int? MaxTokens { get; set; }
+        public float? Temperature { get; set; }
+    }
+
+    private class ChatRequestMessage
+    {
+        public string Role { get; set; } = "";
+        public string Content { get; set; } = "";
+    }
+
+    private class ChatCompletionResponse
+    {
+        public string Model { get; set; } = "";
+        public List<ChatResponseChoice> Choices { get; set; } = [];
+        public ChatUsage Usage { get; set; } = new();
+    }
+
+    private class ChatResponseChoice
+    {
+        public ChatResponseMessage Message { get; set; } = new();
+    }
+
+    private class ChatResponseMessage
+    {
+        public string Content { get; set; } = "";
+    }
+
+    private class ChatUsage
+    {
+        public int PromptTokens { get; set; }
+        public int CompletionTokens { get; set; }
+    }
+}
