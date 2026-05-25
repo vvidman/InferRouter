@@ -14,6 +14,41 @@
    limitations under the License.
 */
 
+using InferRouter.Core.Config;
+using InferRouter.Core.Domain;
+
 namespace InferRouter.Core.Services;
 
-// TODO
+public class ErrorNormalizer
+{
+    public InternalErrorCategory Categorize(
+        int httpStatus,
+        string? rawErrorCode,
+        IReadOnlyList<ErrorMapping> mappings)
+    {
+        bool hasErrorCode = !string.IsNullOrEmpty(rawErrorCode);
+
+        if (hasErrorCode)
+        {
+            foreach (var mapping in mappings)
+            {
+                if (mapping.HttpStatus == httpStatus
+                    && mapping.ErrorCode is not null
+                    && string.Equals(mapping.ErrorCode, rawErrorCode, StringComparison.OrdinalIgnoreCase))
+                {
+                    return mapping.InternalCategory;
+                }
+            }
+        }
+
+        foreach (var mapping in mappings)
+        {
+            if (mapping.HttpStatus == httpStatus && mapping.ErrorCode is null)
+            {
+                return mapping.InternalCategory;
+            }
+        }
+
+        return InternalErrorCategory.UnknownError;
+    }
+}
