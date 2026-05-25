@@ -14,6 +14,19 @@
    limitations under the License.
 */
 
+using InferRouter.Core.Domain;
+
 namespace InferRouter.Core.Config;
 
-// TODO
+public class ProviderConfig
+{
+    public string Name { get; init; } = "";
+    public ProviderType Type { get; init; }
+    public string? BaseUrl { get; init; }
+    public string? Model { get; init; }
+    public int DailyRequestLimit { get; init; }
+    public int RequestsPerMinute { get; init; }
+    public string ErrorCodePath { get; init; } = "error.code";
+    public List<ErrorMapping> ErrorMappings { get; init; } = [];
+    public string? ModelPath { get; init; }
+}

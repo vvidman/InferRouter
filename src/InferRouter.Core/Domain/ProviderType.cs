@@ -16,7 +16,8 @@
 
 namespace InferRouter.Core.Domain;
 
-// TODO
 public enum ProviderType
 {
+    OpenAiCompatible,
+    LocalGguf
 }
