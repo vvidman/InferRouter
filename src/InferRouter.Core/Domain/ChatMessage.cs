@@ -16,4 +16,4 @@
 
 namespace InferRouter.Core.Domain;
 
-// TODO
+public record ChatMessage(string Role, string Content);
