@@ -16,4 +16,10 @@
 
 namespace InferRouter.Core.Domain;
 
-// TODO
+public record InferRequest(
+    string RequestId,
+    IReadOnlyList<ChatMessage> Messages,
+    string? Model,
+    int? MaxTokens,
+    float? Temperature
+);

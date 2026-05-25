@@ -14,6 +14,13 @@
    limitations under the License.
 */
 
+using InferRouter.Core.Domain;
+
 namespace InferRouter.Core.Config;
 
-// TODO
+public class ErrorMapping
+{
+    public int HttpStatus { get; init; }
+    public string? ErrorCode { get; init; }
+    public InternalErrorCategory InternalCategory { get; init; }
+}

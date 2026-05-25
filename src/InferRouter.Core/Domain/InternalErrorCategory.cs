@@ -16,7 +16,11 @@
 
 namespace InferRouter.Core.Domain;
 
-// TODO
 public enum InternalErrorCategory
 {
+    RateLimit,
+    ModelUnavailable,
+    ServerError,
+    AuthError,
+    UnknownError
 }
