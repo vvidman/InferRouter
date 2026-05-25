@@ -1,0 +1,10 @@
+# TODO: placeholder — no real config yet
+version: "3.9"
+
+services:
+  inferrouter:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "5100:5100"
