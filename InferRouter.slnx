@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="src/InferRouter.Core/InferRouter.Core.csproj" />
+  <Project Path="src/InferRouter.Providers/InferRouter.Providers.csproj" />
+  <Project Path="src/InferRouter.Api/InferRouter.Api.csproj" />
+</Solution>

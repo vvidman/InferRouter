@@ -31,6 +31,9 @@ artifacts/
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
 
+# VisualStudio
+.vs
+
 # NuGet Packages
 *.nupkg
 # NuGet Symbol Packages
@@ -55,3 +58,76 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# =============================================================================
+# SECRETS — never commit credentials or API keys
+# =============================================================================
+
+# Live secrets directory (copy of secrets.example/ with real keys)
+secrets/
+
+# Any stray key/token files anywhere in the tree
+*.key
+*.apikey
+*.secret
+*.token
+*.credentials
+
+# Local overrides that may contain secrets
+appsettings.Local.json
+appsettings.*.Local.json
+
+# =============================================================================
+# DOCKER
+# =============================================================================
+
+# Docker override files (often contain local bind mounts or dev credentials)
+docker-compose.override.yml
+docker-compose.*.override.yml
+
+# Docker build context temporary files
+.dockerignore.local
+
+# Volume data directories if mounted locally during development
+docker/volumes/
+docker/data/
+
+# =============================================================================
+# INFERROUTER RUNTIME ARTIFACTS
+# =============================================================================
+
+# Operation log (JSONL — can grow large, not source)
+*.jsonl
+
+# GGUF model files (large binary, user-provided)
+*.gguf
+*.bin
+models/
+
+# =============================================================================
+# IDE / OS
+# =============================================================================
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# Visual Studio Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
