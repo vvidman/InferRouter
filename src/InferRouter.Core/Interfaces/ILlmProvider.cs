@@ -14,6 +14,13 @@
    limitations under the License.
 */
 
+using InferRouter.Core.Domain;
+
 namespace InferRouter.Core.Interfaces;
 
-// TODO
+public interface ILlmProvider
+{
+    string Name { get; }
+    ProviderType Type { get; }
+    Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct);
+}
