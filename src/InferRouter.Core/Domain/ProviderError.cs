@@ -16,4 +16,10 @@
 
 namespace InferRouter.Core.Domain;
 
-// TODO
+public record ProviderError(
+    string ProviderName,
+    InternalErrorCategory Category,
+    int? HttpStatus,
+    string? RawErrorCode,
+    string? Message
+);

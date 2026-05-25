@@ -16,4 +16,13 @@
 
 namespace InferRouter.Core.Domain;
 
-// TODO
+public record InferResult(
+    string RequestId,
+    string ProviderName,
+    string Model,
+    string Content,
+    int PromptTokens,
+    int CompletionTokens,
+    long LatencyMs,
+    bool WasFallback
+);
