@@ -32,6 +32,7 @@ flowchart LR
         RL[RateLimitTracker]
         EH[ErrorNormalizer]
         LOG[OperationLogger\nJSONL]
+        SR[SecretReader\ninjectable singleton]
 
         API --> RC
         RC --> RL
@@ -51,6 +52,9 @@ flowchart LR
     RC --> P2
     RC --> PN
     RC --> LS
+    P1 --> SR
+    P2 --> SR
+    PN --> SR
 ```
 
 **Fallback chain:** configurable ordered list of OpenAI-compatible providers, with LlamaSharp as the guaranteed final fallback. The chain is defined entirely in configuration — no code changes are required to add, remove, or reorder providers.
@@ -282,6 +286,7 @@ Done:
 - OpenAI-compatible `/v1/chat/completions` endpoint + `/health` endpoint
 - Docker Compose stack with secret mounting and model volume
 - ADRs for all key design decisions (ADR-001 through ADR-006)
+- `SecretReader` refactored from static class to injectable singleton — keys read fresh per request in `OpenAiCompatibleProvider.CompleteAsync`, never cached in a field; Docker Secret rotation picked up without restart
 
 ---
 

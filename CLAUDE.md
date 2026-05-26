@@ -4,15 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
-Design phase — documentation and ADRs complete, source code not yet written. Implementation is ready to begin.
+Implementation complete. All three projects exist and build cleanly. Docker Compose stack is functional.
 
 ## What This Is
 
 InferRouter: self-hosted, provider-agnostic LLM inference proxy in C#/.NET 10. Exposes a single OpenAI-compatible endpoint (`/v1/chat/completions` on port 5100) that routes requests through a configurable fallback chain of cloud providers, with a local LlamaSharp GGUF model as final fallback.
 
 ## Build / Test / Run
-
-No projects exist yet. When created, standard .NET commands apply:
 
 ```sh
 dotnet build
@@ -40,7 +38,7 @@ InferRouter.Api          # ASP.NET Core Minimal API host, DI composition root
 ## Key Design Rules (from ADRs)
 
 - **Rate limits**: in-memory only, UTC midnight reset for daily limits, 60-second sliding window for RPM. No Redis, no persistence across restarts. See `docs/adr/ADR-002-in-memory-rate-limit-tracking.md`.
-- **Secrets**: Docker Secrets only — path pattern `/run/secrets/{provider_name}_api_key`. Never env vars or appsettings. Missing key = treated as permanent `AuthError` → fallback to next provider in chain, same behaviour as a live `401` response. See `docs/adr/ADR-005-docker-secrets.md`.
+- **Secrets**: Docker Secrets only — path pattern `/run/secrets/{provider_name}_api_key`. Never env vars or appsettings. `SecretReader` is an injectable singleton (registered in DI, `ILogger<SecretReader>` via primary constructor) — not a static class. `OpenAiCompatibleProvider.CompleteAsync` calls `ReadApiKey` on every request; the key is never stored in a field. This means Docker Secret rotation is picked up without restart and the logger ordering problem at startup is eliminated. Missing key = `ProviderException(401)` → treated as `AuthError` → fallback to next provider. See `docs/adr/ADR-005-docker-secrets.md`.
 - **Operation log**: append-only JSONL, provider name as a field (not a structural separator). One event type per line, all providers use the same schema. See `docs/adr/ADR-001-provider-agnostic-operation-log.md`.
 - **Error handling**: each provider maps its HTTP status codes → `InternalErrorCategory` enum. `FallbackChainExecutor` decides retry/skip based on category, never raw status codes. See `docs/adr/ADR-006-normalized-error-handling.md`.
 - **Provider chain**: config-driven via `appsettings.json`. Zero hardcoded provider lists anywhere. See `docs/adr/ADR-003-config-driven-provider-chain.md`.

@@ -22,7 +22,7 @@ Common approaches in .NET projects include `.env` files, environment variables i
 
 API keys are provided exclusively via **Docker Secrets**, mounted as files at `/run/secrets/<secret_name>` inside the container.
 
-At startup, InferRouter reads each provider's key from the corresponding file path derived from the provider's `Name` in config:
+InferRouter reads each provider's key from the corresponding file path derived from the provider's `Name` in config, on every request:
 
 ```
 /run/secrets/{provider_name}_api_key
@@ -60,17 +60,28 @@ InferRouter is designed for self-hosted, single-host, personal use. The operatio
 
 ---
 
+## Implementation
+
+`SecretReader` is an injectable singleton. `ILogger<SecretReader>` is provided via primary constructor — there is no static state and no startup `Configure` call:
+
+```csharp
+public class SecretReader(ILogger<SecretReader> logger)
+{
+    public string? ReadApiKey(string providerName);
+}
+```
+
+`OpenAiCompatibleProvider.CompleteAsync` calls `ReadApiKey` at the start of every request. The key is never stored in a field. If the call returns null, a `ProviderException(401)` is thrown immediately, which the `FallbackChainExecutor` maps to `AuthError` and skips to the next provider — the same path as a live `401` from the provider.
+
 ## Missing Key Behaviour
 
-If a provider's secret file does not exist or is empty at startup, the provider **remains in the chain** but is treated as permanently in an `auth_error` state. This is consistent with ADR-006: a missing key is semantically identical to an invalid key — the provider cannot authenticate, so the `FallbackChainExecutor` skips it and moves to the next provider in the chain, exactly as it would after receiving a live `401` response.
+If a provider's secret file does not exist or is empty, `ReadApiKey` logs a warning and returns null. The provider **remains in the chain** but every request to it immediately raises `AuthError`, causing the `FallbackChainExecutor` to skip it. This is consistent with ADR-006: a missing key is semantically identical to an invalid key.
 
 This means:
 - No special startup-time removal logic is needed
 - The fallback chain handles the missing key transparently at request time
-- The `rate_limit_hit` / `infer_fallback` log entries provide a clear audit trail of why the provider was skipped
-- If the key file appears later (e.g. the user mounts it after startup), a container restart picks it up — no hot-reload is needed
-
-InferRouter does log a warning at startup for each provider whose secret file is not found, so the misconfiguration is visible without needing to inspect the operation log.
+- The `infer_fallback` log entries provide a clear audit trail of why the provider was skipped
+- If the key file is mounted or rotated after startup, the next request picks it up automatically — no container restart is needed
 
 ---
 
@@ -80,8 +91,11 @@ InferRouter does log a warning at startup for each provider whose secret file is
 - Keys never appear in environment variables, images, or config files
 - Standard Docker Compose feature — no additional tooling required
 - Clear separation: `appsettings.json` holds structure, `secrets/` holds credentials
+- Docker Secret rotation is picked up on the next request without a container restart
+- No long-lived string holding an API key in process memory
+- Logger ordering problem at startup is eliminated — `SecretReader` receives its `ILogger` from DI like any other service
 
 **Negative:**
 - Slightly more setup friction for first-time users compared to a plain `.env` file
 - `secrets.example/` must be kept in sync with the actual expected secret names as providers are added
-- A missing key causes silent fallback at request time if the startup warning is not noticed. This is by design — the chain degrades gracefully — but could be surprising if the user expects a hard failure on misconfiguration
+- A missing key causes silent fallback at request time if the warning in the operation log is not noticed. This is by design — the chain degrades gracefully — but could be surprising if the user expects a hard failure on misconfiguration

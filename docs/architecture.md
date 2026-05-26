@@ -62,7 +62,7 @@ flowchart TD
     FCE --> IFACE
     OAP --> IFACE
     LSP --> IFACE
-    DI --> SR
+    OAP --> SR
 ```
 
 ---
@@ -269,13 +269,14 @@ All methods append a single JSONL line. The file is opened in append mode per wr
 
 ### SecretReader
 
+Registered as a singleton in DI. `ILogger<SecretReader>` is injected via primary constructor — no static state, no `Configure` call required.
+
 ```csharp
-public static class SecretReader
+public class SecretReader(ILogger<SecretReader> logger)
 {
     // Reads /run/secrets/{providerName}_api_key
-    // Returns null and logs a warning if the file does not exist.
-    // A null key causes the provider to behave as if in permanent AuthError state.
-    public static string? ReadApiKey(string providerName);
+    // Returns null and logs a warning if the file does not exist or is empty.
+    public string? ReadApiKey(string providerName);
 }
 ```
 
@@ -288,18 +289,22 @@ public static class SecretReader
 ```csharp
 public class OpenAiCompatibleProvider(
     ProviderConfig config,
-    string? apiKey,             // null → permanent AuthError on first attempt
+    SecretReader secretReader,  // injected; ReadApiKey called fresh on every request
     HttpClient httpClient) : ILlmProvider
 {
     public string Name => config.Name;
     public ProviderType Type => ProviderType.OpenAiCompatible;
 
     public async Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct);
+    // calls secretReader.ReadApiKey(config.Name) at the start of each request;
+    // throws ProviderException(401) if null — no API key is ever stored in a field.
     // throws ProviderException on non-2xx, carrying HttpStatus and raw error body
 }
 ```
 
 Uses `System.Net.Http.HttpClient` with a shared instance per provider. Serializes to/from the OpenAI chat completions request/response shape using `System.Text.Json`.
+
+The per-request key read means Docker Secret rotation is picked up automatically without a container restart.
 
 ---
 
@@ -376,7 +381,8 @@ On startup, before the host starts accepting requests:
 3. Validate that the last provider is `local_gguf`
 4. Validate that all `openai_compatible` entries have a `BaseUrl`
 5. Validate that the `local_gguf` entry has a `ModelPath` that exists on disk
-6. For each `openai_compatible` provider, call `SecretReader.ReadApiKey` — log a warning for any that return null
-7. Build the `ILlmProvider` list and register `FallbackChainExecutor` in DI
+6. Build the `ILlmProvider` list and register `FallbackChainExecutor` in DI
 
 If steps 2–5 fail, the application exits with a non-zero code and a descriptive error message.
+
+API key availability is not validated at startup. `SecretReader.ReadApiKey` is called per request inside `OpenAiCompatibleProvider.CompleteAsync`; a missing key produces a `ProviderException(401)` which the `FallbackChainExecutor` treats as `AuthError` and skips to the next provider.

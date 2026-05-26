@@ -22,7 +22,7 @@ namespace InferRouter.Api.Endpoints;
 
 public class ChatCompletionsEndpoint
 {
-    public void Map(WebApplication app)
+    public static void Map(WebApplication app)
     {
         app.MapPost("/v1/chat/completions", HandleAsync);
         app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));

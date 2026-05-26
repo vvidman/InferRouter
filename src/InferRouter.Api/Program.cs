@@ -62,14 +62,10 @@ if (!File.Exists(ggufConfig.ModelPath))
     return 1;
 }
 
-// Read API keys early (step 5 of startup validation — null keys are warned later, not fatal)
-var apiKeys = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-foreach (var config in options.Providers.Where(p => p.Type == ProviderType.OpenAiCompatible))
-    apiKeys[config.Name] = SecretReader.ReadApiKey(config.Name);
-
 // DI registrations
 builder.Services.Configure<InferRouterOptions>(builder.Configuration.GetSection("InferRouter"));
 
+builder.Services.AddSingleton<SecretReader>();
 builder.Services.AddSingleton<ErrorNormalizer>();
 
 builder.Services.AddSingleton<RateLimitTracker>(sp =>
@@ -85,6 +81,7 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<IReadOnlyList<ILlmProvider>>(sp =>
 {
     var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var secretReader = sp.GetRequiredService<SecretReader>();
     var providers = new List<ILlmProvider>();
 
     foreach (var config in options.Providers)
@@ -93,7 +90,7 @@ builder.Services.AddSingleton<IReadOnlyList<ILlmProvider>>(sp =>
         {
             ProviderType.OpenAiCompatible => new OpenAiCompatibleProvider(
                 config,
-                apiKeys.GetValueOrDefault(config.Name),
+                secretReader,
                 httpClientFactory.CreateClient()),
             ProviderType.LocalGguf => new LlamaSharpProvider(config),
             _ => throw new InvalidOperationException($"Unknown provider type: {config.Type}")
@@ -109,21 +106,7 @@ builder.Services.AddSingleton<FallbackChainExecutor>();
 
 var app = builder.Build();
 
-// Configure SecretReader with the DI logger factory for runtime use
-SecretReader.Configure(app.Services.GetRequiredService<ILoggerFactory>());
-
-// Startup validation 5: warn for each OpenAiCompatible provider with a missing API key
-var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
-foreach (var (name, key) in apiKeys)
-{
-    if (key is null)
-        startupLogger.LogWarning(
-            "API key missing for provider '{ProviderName}'. Requests to this provider will result in AuthError until the secret is available.",
-            name);
-}
-
-var inferEndpointImpl = new ChatCompletionsEndpoint();
-inferEndpointImpl.Map(app);
+ChatCompletionsEndpoint.Map(app);
 
 app.Run();
 return 0;
