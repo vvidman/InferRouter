@@ -14,6 +14,7 @@
    limitations under the License.
 */
 
+using InferRouter.Core.Config;
 using InferRouter.Core.Domain;
 using InferRouter.Core.Interfaces;
 using InferRouter.Core.Services;
@@ -25,5 +26,239 @@ namespace InferRouter.Tests.Core;
 
 public class FallbackChainExecutorTests
 {
-    // TODO: implement tests via GitHub issues
+    private sealed record ExecutorBundle(
+        FallbackChainExecutor Executor,
+        RateLimitTracker Tracker,
+        string LogFilePath);
+
+    private static ExecutorBundle BuildExecutor(
+        IReadOnlyList<Mock<ILlmProvider>> mocks,
+        Func<string, ProviderConfig>? configFactory = null)
+    {
+        var providerConfigs = mocks
+            .Select(m => configFactory?.Invoke(m.Object.Name) ?? new ProviderConfig { Name = m.Object.Name })
+            .ToList();
+        var tracker = new RateLimitTracker(providerConfigs, NullLogger<RateLimitTracker>.Instance);
+        var logPath = Path.Combine(Path.GetTempPath(), $"inferrouter-test-{Guid.NewGuid()}.jsonl");
+        var executor = new FallbackChainExecutor(
+            mocks.Select(m => m.Object).ToList(),
+            tracker,
+            new ErrorNormalizer(),
+            new OperationLogger(logPath),
+            NullLogger<FallbackChainExecutor>.Instance);
+        return new ExecutorBundle(executor, tracker, logPath);
+    }
+
+    private static Mock<ILlmProvider> MakeProvider(string name)
+    {
+        var mock = new Mock<ILlmProvider>();
+        mock.Setup(p => p.Name).Returns(name);
+        mock.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
+        return mock;
+    }
+
+    private static InferRequest MakeRequest(string id = "req-001") =>
+        new(id, [new ChatMessage("user", "hello")], "test-model", null, null);
+
+    private static InferResult MakeResult(string providerName, string requestId = "req-001") =>
+        new(requestId, providerName, "test-model", "Hello!", 10, 20, 100, false);
+
+    private static ProviderException MakeRateLimitException() =>
+        new(429, null, [new ErrorMapping { HttpStatus = 429, InternalCategory = InternalErrorCategory.RateLimit }]);
+
+    private static ProviderException MakeAuthException() =>
+        new(401, null, [new ErrorMapping { HttpStatus = 401, InternalCategory = InternalErrorCategory.AuthError }]);
+
+    private static ProviderException MakeServerException() =>
+        new(500, null, [new ErrorMapping { HttpStatus = 500, InternalCategory = InternalErrorCategory.ServerError }]);
+
+    // Happy path
+
+    [Fact]
+    public async Task SingleProvider_ReturnsResult()
+    {
+        var p1 = MakeProvider("p1");
+        var request = MakeRequest();
+        var expected = MakeResult("p1");
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(expected);
+
+        var bundle = BuildExecutor([p1]);
+        var result = await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public async Task SingleProvider_LogsStartedAndCompleted()
+    {
+        var p1 = MakeProvider("p1");
+        var request = MakeRequest();
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p1"));
+
+        var bundle = BuildExecutor([p1]);
+        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+
+        var log = await File.ReadAllTextAsync(bundle.LogFilePath);
+        Assert.Contains("infer_started", log);
+        Assert.Contains("infer_completed", log);
+    }
+
+    [Fact]
+    public async Task SingleProvider_RecordsRequestOnSuccess()
+    {
+        var p1 = MakeProvider("p1");
+        var request = MakeRequest();
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p1"));
+
+        var bundle = BuildExecutor([p1], name => new ProviderConfig { Name = name, RequestsPerMinute = 1 });
+        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.True(bundle.Tracker.IsExhausted("p1"));
+    }
+
+    // Fallback — pre-exhausted provider
+
+    [Fact]
+    public async Task FirstProviderPreExhausted_SecondProviderCalled()
+    {
+        var p1 = MakeProvider("p1");
+        var p2 = MakeProvider("p2");
+        var request = MakeRequest();
+        p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p2"));
+
+        var bundle = BuildExecutor([p1, p2]);
+        bundle.Tracker.MarkExhausted("p1");
+        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+
+        p1.Verify(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        p2.Verify(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task FirstProviderPreExhausted_LogsRateLimitHit()
+    {
+        var p1 = MakeProvider("p1");
+        var p2 = MakeProvider("p2");
+        var request = MakeRequest();
+        p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p2"));
+
+        var bundle = BuildExecutor([p1, p2]);
+        bundle.Tracker.MarkExhausted("p1");
+        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+
+        var log = await File.ReadAllTextAsync(bundle.LogFilePath);
+        Assert.Contains("rate_limit_hit", log);
+        Assert.Contains("\"p1\"", log);
+    }
+
+    // Fallback — ProviderException with RateLimit category
+
+    [Fact]
+    public async Task FirstProviderThrowsRateLimit_MarkExhaustedAndFallsToNext()
+    {
+        var p1 = MakeProvider("p1");
+        var p2 = MakeProvider("p2");
+        var request = MakeRequest();
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ThrowsAsync(MakeRateLimitException());
+        p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p2"));
+
+        var bundle = BuildExecutor([p1, p2]);
+        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.True(bundle.Tracker.IsExhausted("p1"));
+        p2.Verify(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task FirstProviderThrowsRateLimit_LogsFallback()
+    {
+        var p1 = MakeProvider("p1");
+        var p2 = MakeProvider("p2");
+        var request = MakeRequest();
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ThrowsAsync(MakeRateLimitException());
+        p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p2"));
+
+        var bundle = BuildExecutor([p1, p2]);
+        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+
+        var log = await File.ReadAllTextAsync(bundle.LogFilePath);
+        Assert.Contains("infer_fallback", log);
+        Assert.Contains("\"p1\"", log);
+        Assert.Contains("\"p2\"", log);
+    }
+
+    // Fallback — ProviderException with AuthError category
+
+    [Fact]
+    public async Task FirstProviderThrowsAuthError_NoMarkExhausted_FallsToNext()
+    {
+        var p1 = MakeProvider("p1");
+        var p2 = MakeProvider("p2");
+        var request = MakeRequest();
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ThrowsAsync(MakeAuthException());
+        p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p2"));
+
+        var bundle = BuildExecutor([p1, p2]);
+        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.False(bundle.Tracker.IsExhausted("p1"));
+        p2.Verify(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // Fallback — ProviderException with ServerError category
+
+    [Fact]
+    public async Task FirstProviderThrowsServerError_RetrySucceeds_ReturnsResult()
+    {
+        var p1 = MakeProvider("p1");
+        var request = MakeRequest();
+        var expected = MakeResult("p1");
+        p1.SetupSequence(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(MakeServerException())
+            .ReturnsAsync(expected);
+
+        var bundle = BuildExecutor([p1]);
+        var result = await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal(expected, result);
+        var log = await File.ReadAllTextAsync(bundle.LogFilePath);
+        Assert.Contains("infer_completed", log);
+    }
+
+    [Fact]
+    public async Task FirstProviderThrowsServerError_RetryAlsoFails_FallsToNextAndLogsFallback()
+    {
+        var p1 = MakeProvider("p1");
+        var p2 = MakeProvider("p2");
+        var request = MakeRequest();
+        var expected = MakeResult("p2");
+        p1.SetupSequence(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(MakeServerException())
+            .ThrowsAsync(MakeServerException());
+        p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(expected);
+
+        var bundle = BuildExecutor([p1, p2]);
+        var result = await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal(expected, result);
+        var log = await File.ReadAllTextAsync(bundle.LogFilePath);
+        Assert.Contains("infer_fallback", log);
+    }
+
+    // All providers exhausted
+
+    [Fact]
+    public async Task AllProvidersExhausted_ThrowsInferRouterExceptionAndLogsFailed()
+    {
+        var p1 = MakeProvider("p1");
+        var request = MakeRequest();
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ThrowsAsync(MakeAuthException());
+
+        var bundle = BuildExecutor([p1]);
+        await Assert.ThrowsAsync<InferRouterException>(() =>
+            bundle.Executor.ExecuteAsync(request, CancellationToken.None));
+
+        var log = await File.ReadAllTextAsync(bundle.LogFilePath);
+        Assert.Contains("infer_failed", log);
+    }
 }
