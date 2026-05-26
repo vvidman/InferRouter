@@ -90,9 +90,9 @@ Providers are defined as an ordered list. The chain is tried top-to-bottom. Llam
       "DailyRequestLimit": 1000,
       "RequestsPerMinute": 30,
       "ErrorMappings": [
-        { "HttpStatus": 429, "ErrorCode": "rate_limit_exceeded", "InternalCategory": "rate_limit" },
-        { "HttpStatus": 401, "InternalCategory": "auth_error" },
-        { "HttpStatus": 503, "InternalCategory": "server_error" }
+        { "HttpStatus": 429, "ErrorCode": "rate_limit_exceeded", "InternalCategory": "RateLimit" },
+        { "HttpStatus": 401, "InternalCategory": "AuthError" },
+        { "HttpStatus": 503, "InternalCategory": "ServerError" }
       ]
     },
     {
@@ -103,9 +103,9 @@ Providers are defined as an ordered list. The chain is tried top-to-bottom. Llam
       "DailyRequestLimit": 500,
       "RequestsPerMinute": 10,
       "ErrorMappings": [
-        { "HttpStatus": 429, "InternalCategory": "rate_limit" },
-        { "HttpStatus": 400, "ErrorCode": "quota_exceeded", "InternalCategory": "rate_limit" },
-        { "HttpStatus": 401, "InternalCategory": "auth_error" }
+        { "HttpStatus": 429, "InternalCategory": "RateLimit" },
+        { "HttpStatus": 400, "ErrorCode": "quota_exceeded", "InternalCategory": "RateLimit" },
+        { "HttpStatus": 401, "InternalCategory": "AuthError" }
       ]
     },
     {
@@ -121,10 +121,10 @@ The `ErrorMappings` block is per-provider. An `HttpStatus` match is required; `E
 
 | InternalCategory | Fallback triggered |
 |---|---|
-| `rate_limit` | Yes |
-| `model_unavailable` | Yes |
-| `server_error` | Yes (after retry) |
-| `auth_error` | No — logged as fatal, no fallback |
+| `RateLimit` | Yes |
+| `ModelUnavailable` | Yes |
+| `ServerError` | Yes (after retry) |
+| `AuthError` | No — logged as fatal, no fallback |
 
 ---
 
@@ -161,33 +161,43 @@ API keys are never stored in config files or environment variables. They are mou
 
 ```
 secrets/                  ← git-ignored, lives on the host only
-    provider_a_api_key.txt
-    provider_b_api_key.txt
+    groq_api_key.txt
+    gemini_api_key.txt
 
 secrets.example/          ← committed to the repo, documents expected layout
-    provider_a_api_key.txt    ← contains placeholder text
-    provider_b_api_key.txt
+    groq_api_key.txt          ← contains placeholder text
+    gemini_api_key.txt
 ```
 
 ```yaml
-# docker-compose.yml
+# docker/docker-compose.yml (excerpt)
 services:
   inferrouter:
-    image: inferrouter
+    build:
+      context: ..
+      dockerfile: Dockerfile
     ports:
       - "5100:8080"
     secrets:
-      - provider_a_api_key
-      - provider_b_api_key
+      - groq_api_key
+      - gemini_api_key
+    volumes:
+      - type: bind
+        source: ../models
+        target: /models
+        read_only: true
+      - type: bind
+        source: ../logs
+        target: /var/log/inferrouter
 
 secrets:
-  provider_a_api_key:
-    file: ./secrets/provider_a_api_key.txt
-  provider_b_api_key:
-    file: ./secrets/provider_b_api_key.txt
+  groq_api_key:
+    file: ../secrets/groq_api_key.txt
+  gemini_api_key:
+    file: ../secrets/gemini_api_key.txt
 ```
 
-Inside the container, keys are available at `/run/secrets/provider_a_api_key`.
+Inside the container, keys are available at `/run/secrets/groq_api_key` and `/run/secrets/gemini_api_key`. Add entries to both `secrets:` blocks when configuring additional providers.
 
 ---
 
@@ -206,9 +216,9 @@ The following providers have been validated against InferRouter. Their config sn
   "DailyRequestLimit": 14400,
   "RequestsPerMinute": 30,
   "ErrorMappings": [
-    { "HttpStatus": 429, "InternalCategory": "rate_limit" },
-    { "HttpStatus": 401, "InternalCategory": "auth_error" },
-    { "HttpStatus": 503, "InternalCategory": "server_error" }
+    { "HttpStatus": 429, "InternalCategory": "RateLimit" },
+    { "HttpStatus": 401, "InternalCategory": "AuthError" },
+    { "HttpStatus": 503, "InternalCategory": "ServerError" }
   ]
 }
 ```
@@ -224,10 +234,10 @@ The following providers have been validated against InferRouter. Their config sn
   "DailyRequestLimit": 1500,
   "RequestsPerMinute": 10,
   "ErrorMappings": [
-    { "HttpStatus": 429, "InternalCategory": "rate_limit" },
-    { "HttpStatus": 400, "ErrorCode": "RESOURCE_EXHAUSTED", "InternalCategory": "rate_limit" },
-    { "HttpStatus": 401, "InternalCategory": "auth_error" },
-    { "HttpStatus": 503, "InternalCategory": "server_error" }
+    { "HttpStatus": 429, "InternalCategory": "RateLimit" },
+    { "HttpStatus": 400, "ErrorCode": "RESOURCE_EXHAUSTED", "InternalCategory": "RateLimit" },
+    { "HttpStatus": 401, "InternalCategory": "AuthError" },
+    { "HttpStatus": 503, "InternalCategory": "ServerError" }
   ]
 }
 ```
@@ -252,7 +262,7 @@ Any GGUF-format model compatible with LlamaSharp can be used. No API key require
 |---|---|
 | Runtime | .NET 10, C# |
 | HTTP layer | ASP.NET Core Minimal API |
-| Local inference | LlamaSharp (GGUF) |
+| Local inference | LlamaSharp 0.20.0 (GGUF) |
 | Operation log | JSONL (append-only file) |
 | Containers | Docker Compose |
 | Secret management | Docker Secrets |
@@ -261,29 +271,47 @@ Any GGUF-format model compatible with LlamaSharp can be used. No API key require
 
 ## Project Status
 
-**In design.**
+**Implemented.**
 
-Planned:
-- `ILlmProvider` interface + per-provider implementations
+Done:
+- `ILlmProvider` interface + per-provider implementations (`OpenAiCompatibleProvider`, `LlamaSharpProvider`)
 - `FallbackChainExecutor` with configurable chain order
-- `RateLimitTracker` with UTC midnight reset
+- `RateLimitTracker` with UTC midnight reset and 60-second sliding RPM window
 - `ErrorNormalizer` with per-provider mapping config
 - `OperationLogger` (JSONL, append-only)
-- OpenAI-compatible `/v1/chat/completions` endpoint
-- Docker Compose stack with secret mounting
-- ADRs for all key design decisions
+- OpenAI-compatible `/v1/chat/completions` endpoint + `/health` endpoint
+- Docker Compose stack with secret mounting and model volume
+- ADRs for all key design decisions (ADR-001 through ADR-006)
 
 ---
 
 ## Getting Started
 
 ```bash
-# Copy secret placeholders and fill in your keys
+# 1. Copy secret placeholders and fill in your API keys
 cp -r secrets.example secrets
-echo "your-provider-a-key" > secrets/provider_a_api_key.txt
+echo "your-groq-api-key" > secrets/groq_api_key.txt
+echo "your-gemini-api-key" > secrets/gemini_api_key.txt
 
-# Start the router
+# 2. Provide a GGUF model file at the path configured in appsettings.json
+#    Default: models/model.gguf (mounted into the container at /models/model.gguf)
+#    Download a GGUF model from https://huggingface.co/models?search=gguf
+#    and place it at models/model.gguf
+
+# 3. Start the router
 cd docker && docker compose up -d
+```
+
+**Smoke test** — verify the router is working after startup:
+
+```bash
+# Health check
+curl http://localhost:5100/health
+
+# Chat completion
+curl http://localhost:5100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"","messages":[{"role":"user","content":"hello"}]}'
 ```
 
 The router is available at `http://localhost:5100/v1/chat/completions` — drop-in compatible with any OpenAI SDK client.
