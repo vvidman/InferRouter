@@ -17,13 +17,12 @@
 using InferRouter.Api.Models;
 using InferRouter.Core.Domain;
 using InferRouter.Core.Services;
-using Microsoft.Extensions.Logging;
 
 namespace InferRouter.Api.Endpoints;
 
-public static class ChatCompletionsEndpoint
+public class ChatCompletionsEndpoint
 {
-    public static void Map(WebApplication app)
+    public void Map(WebApplication app)
     {
         app.MapPost("/v1/chat/completions", HandleAsync);
         app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));

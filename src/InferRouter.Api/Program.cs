@@ -122,7 +122,8 @@ foreach (var (name, key) in apiKeys)
             name);
 }
 
-ChatCompletionsEndpoint.Map(app);
+var inferEndpointImpl = new ChatCompletionsEndpoint();
+inferEndpointImpl.Map(app);
 
 app.Run();
 return 0;
