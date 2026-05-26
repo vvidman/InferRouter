@@ -26,6 +26,7 @@ public static class ChatCompletionsEndpoint
     public static void Map(WebApplication app)
     {
         app.MapPost("/v1/chat/completions", HandleAsync);
+        app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
     }
 
     public static async Task<IResult> HandleAsync(

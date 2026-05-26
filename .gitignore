@@ -21,7 +21,6 @@ bld/
 [Bb]in/
 [Oo]bj/
 [Ll]og/
-[Ll]ogs/
 
 # .NET Core
 project.lock.json
@@ -97,12 +96,12 @@ docker/data/
 # =============================================================================
 
 # Operation log (JSONL — can grow large, not source)
+# logs/.gitkeep is committed to create the bind-mount target; JSONL content stays out via *.jsonl
 *.jsonl
 
 # GGUF model files (large binary, user-provided)
-*.gguf
-*.bin
-models/
+models/*.gguf
+models/*.bin
 
 # =============================================================================
 # IDE / OS

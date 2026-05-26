@@ -1,10 +1,32 @@
-# TODO: placeholder — no real config yet
-version: "3.9"
-
 services:
   inferrouter:
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: Dockerfile
+    image: inferrouter:latest
     ports:
-      - "5100:5100"
+      - "5100:8080"
+    restart: unless-stopped
+    secrets:
+      - groq_api_key
+      - gemini_api_key
+    volumes:
+      - type: bind
+        source: ../models
+        target: /models
+        read_only: true
+      - type: bind
+        source: ../logs
+        target: /var/log/inferrouter
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+secrets:
+  groq_api_key:
+    file: ../secrets/groq_api_key.txt
+  gemini_api_key:
+    file: ../secrets/gemini_api_key.txt
