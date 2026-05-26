@@ -22,13 +22,14 @@ using System.Text.Json.Serialization;
 using InferRouter.Core.Config;
 using InferRouter.Core.Domain;
 using InferRouter.Core.Interfaces;
+using InferRouter.Core.Services;
 
 namespace InferRouter.Providers;
 
 public class OpenAiCompatibleProvider : ILlmProvider
 {
     private readonly ProviderConfig _config;
-    private readonly string? _apiKey;
+    private readonly SecretReader _secretReader;
     private readonly HttpClient _httpClient;
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
@@ -40,16 +41,17 @@ public class OpenAiCompatibleProvider : ILlmProvider
     public string Name => _config.Name;
     public ProviderType Type => ProviderType.OpenAiCompatible;
 
-    public OpenAiCompatibleProvider(ProviderConfig config, string? apiKey, HttpClient httpClient)
+    public OpenAiCompatibleProvider(ProviderConfig config, SecretReader secretReader, HttpClient httpClient)
     {
         _config = config;
-        _apiKey = apiKey;
+        _secretReader = secretReader;
         _httpClient = httpClient;
     }
 
     public async Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct)
     {
-        if (_apiKey is null)
+        var apiKey = _secretReader.ReadApiKey(_config.Name);
+        if (apiKey is null)
             throw new ProviderException(401, "missing_api_key", _config.ErrorMappings);
 
         var body = new ChatCompletionRequest
@@ -67,7 +69,7 @@ public class OpenAiCompatibleProvider : ILlmProvider
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
-        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
         var sw = Stopwatch.StartNew();
         var response = await _httpClient.SendAsync(httpRequest, ct);
