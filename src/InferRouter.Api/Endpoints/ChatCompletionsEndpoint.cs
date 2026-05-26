@@ -14,6 +14,76 @@
    limitations under the License.
 */
 
+using InferRouter.Api.Models;
+using InferRouter.Core.Domain;
+using InferRouter.Core.Services;
+using Microsoft.Extensions.Logging;
+
 namespace InferRouter.Api.Endpoints;
 
-// TODO
+public static class ChatCompletionsEndpoint
+{
+    public static void Map(WebApplication app)
+    {
+        app.MapPost("/v1/chat/completions", HandleAsync);
+    }
+
+    public static async Task<IResult> HandleAsync(
+        OpenAiChatRequest openAiRequest,
+        FallbackChainExecutor executor,
+        ILogger<ChatCompletionsEndpoint> logger,
+        CancellationToken ct)
+    {
+        try
+        {
+            var request = new InferRequest(
+                RequestId: Guid.NewGuid().ToString(),
+                Messages: openAiRequest.Messages
+                    .Select(m => new ChatMessage(m.Role, m.Content))
+                    .ToList(),
+                Model: openAiRequest.Model,
+                MaxTokens: openAiRequest.MaxTokens,
+                Temperature: openAiRequest.Temperature);
+
+            var result = await executor.ExecuteAsync(request, ct);
+
+            var response = new OpenAiChatResponse(
+                Id: "inferrouter-" + result.RequestId,
+                Object: "chat.completion",
+                Created: DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                Model: result.Model,
+                Choices:
+                [
+                    new OpenAiChoice(
+                        Index: 0,
+                        Message: new OpenAiMessage("assistant", result.Content),
+                        FinishReason: "stop")
+                ],
+                Usage: new OpenAiUsage(
+                    result.PromptTokens,
+                    result.CompletionTokens,
+                    result.PromptTokens + result.CompletionTokens));
+
+            return Results.Ok(response);
+        }
+        catch (InferRouterException)
+        {
+            return Results.Problem(
+                detail: "All providers exhausted",
+                statusCode: 503);
+        }
+        catch (OperationCanceledException)
+        {
+            return Results.Problem(
+                detail: "Request cancelled",
+                statusCode: 499);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Unhandled exception processing chat completion request");
+            return Results.Problem(
+                detail: "Internal error",
+                statusCode: 500);
+        }
+    }
+}
