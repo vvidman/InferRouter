@@ -17,8 +17,10 @@ RUN dotnet publish src/InferRouter.Api/InferRouter.Api.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
-RUN addgroup --system inferrouter && \
-    adduser --system --ingroup inferrouter inferrouter
+RUN apt-get update && apt-get install -y libgomp1 && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system inferrouter && \
+    useradd --system --gid inferrouter --no-create-home inferrouter
 
 RUN mkdir -p /var/log/inferrouter /models /run/secrets && \
     chown inferrouter:inferrouter /var/log/inferrouter /models
@@ -27,6 +29,7 @@ COPY --from=build --chown=inferrouter:inferrouter /app/publish .
 
 USER inferrouter
 
+ENV LD_LIBRARY_PATH=/app/runtimes/linux-x64/native/avx2
 ENV ASPNETCORE_URLS=http://+:8080
 ENV ASPNETCORE_ENVIRONMENT=Production
 EXPOSE 8080

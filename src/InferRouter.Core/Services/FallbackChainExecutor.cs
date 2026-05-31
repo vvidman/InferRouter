@@ -81,6 +81,11 @@ public class FallbackChainExecutor(
 
                 operationLogger.LogFallback(provider.Name, nextProviderName, category, request.RequestId);
             }
+            catch (HttpRequestException ex)
+            {
+                logger.LogWarning(ex, "Provider {ProviderName} network error; falling back.", provider.Name);
+                operationLogger.LogFallback(provider.Name, nextProviderName, InternalErrorCategory.ServerError, request.RequestId);
+            }
         }
 
         operationLogger.LogFailed(request.RequestId, "All providers exhausted");

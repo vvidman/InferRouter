@@ -14,15 +14,16 @@
    limitations under the License.
 */
 
+using InferRouter.Core.Config;
+using InferRouter.Core.Domain;
+using InferRouter.Core.Interfaces;
+using InferRouter.Core.Services;
+using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using InferRouter.Core.Config;
-using InferRouter.Core.Domain;
-using InferRouter.Core.Interfaces;
-using InferRouter.Core.Services;
 
 namespace InferRouter.Providers;
 
@@ -56,7 +57,7 @@ public class OpenAiCompatibleProvider : ILlmProvider
 
         var body = new ChatCompletionRequest
         {
-            Model = request.Model ?? _config.Model ?? "",
+            Model = (string.IsNullOrEmpty(request.Model) ? _config.Model : request.Model) ?? "",
             Messages = request.Messages
                 .Select(m => new ChatRequestMessage { Role = m.Role, Content = m.Content })
                 .ToList(),
