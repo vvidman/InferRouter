@@ -143,6 +143,11 @@ builder.Services.AddSingleton<IRoutingStrategy>(sp =>
 builder.Services.AddSingleton<ProviderOrchestrator>();
 builder.Services.AddSingleton<ProviderHealthChecker>();
 
+builder.Services.AddSingleton(sp => new StatsService(
+    sp.GetRequiredService<IRateLimitTracker>(),
+    sp.GetRequiredService<IReadOnlyList<ILlmProvider>>(),
+    options.OperationLogPath));
+
 var app = builder.Build();
 
 var strategyLogger = app.Services.GetRequiredService<ILogger<ProviderOrchestrator>>();
@@ -151,6 +156,7 @@ strategyLogger.LogInformation(
 
 ChatCompletionsEndpoint.Map(app);
 HealthProvidersEndpoint.Map(app);
+StatsEndpoint.Map(app);
 
 app.Run();
 return 0;

@@ -30,7 +30,11 @@ public class ProviderOrchestratorTests
     private sealed record OrchestratorBundle(
         ProviderOrchestrator Orchestrator,
         IRateLimitTracker Tracker,
-        string LogFilePath);
+        string LogDir)
+    {
+        public string LogFilePath =>
+            Path.Combine(LogDir, $"operations-{DateOnly.FromDateTime(DateTime.UtcNow):yyyy-MM-dd}.jsonl");
+    }
 
     private static OrchestratorBundle BuildOrchestrator(
         IReadOnlyList<Mock<ILlmProvider>> mocks,
@@ -43,15 +47,15 @@ public class ProviderOrchestratorTests
         var providers = mocks.Select(m => m.Object).ToList<ILlmProvider>().AsReadOnly();
         var cloudProviders = providers.Where(p => p.Type != ProviderType.LocalGguf).ToList().AsReadOnly();
         var strategy = new ChainOfResponsibilityStrategy(cloudProviders, tracker);
-        var logPath = Path.Combine(Path.GetTempPath(), $"inferrouter-test-{Guid.NewGuid()}.jsonl");
+        var logDir = Path.Combine(Path.GetTempPath(), $"inferrouter-test-{Guid.NewGuid()}");
         var orchestrator = new ProviderOrchestrator(
             providers,
             strategy,
             tracker,
             new ErrorNormalizer(),
-            new OperationLogger(logPath),
+            new OperationLogger(logDir),
             NullLogger<ProviderOrchestrator>.Instance);
-        return new OrchestratorBundle(orchestrator, tracker, logPath);
+        return new OrchestratorBundle(orchestrator, tracker, logDir);
     }
 
     private static Mock<ILlmProvider> MakeProvider(string name)
