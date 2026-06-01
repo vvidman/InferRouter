@@ -15,11 +15,12 @@
 */
 
 using InferRouter.Core.Config;
+using InferRouter.Core.Interfaces;
 using Microsoft.Extensions.Logging;
 
 namespace InferRouter.Core.Services;
 
-public sealed class RateLimitTracker : IDisposable
+public sealed class RateLimitTracker : IRateLimitTracker, IDisposable
 {
     private sealed class ProviderState(int dailyLimit, int rpmLimit)
     {

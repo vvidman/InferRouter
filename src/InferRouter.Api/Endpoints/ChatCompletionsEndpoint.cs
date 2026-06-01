@@ -30,7 +30,7 @@ public class ChatCompletionsEndpoint
 
     public static async Task<IResult> HandleAsync(
         OpenAiChatRequest openAiRequest,
-        FallbackChainExecutor executor,
+        ProviderOrchestrator executor,
         ILogger<ChatCompletionsEndpoint> logger,
         CancellationToken ct)
     {

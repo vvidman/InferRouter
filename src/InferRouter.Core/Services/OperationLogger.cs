@@ -80,6 +80,15 @@ public class OperationLogger(string logFilePath)
             Provider = providerName
         });
 
+    public void LogProviderOrdering(string requestId, IReadOnlyList<string> orderedProviders) =>
+        AppendLine(new
+        {
+            Ts = DateTimeOffset.UtcNow,
+            RequestId = requestId,
+            Event = "infer_ordering",
+            OrderedProviders = orderedProviders
+        });
+
     private void AppendLine<T>(T entry)
     {
         var dir = Path.GetDirectoryName(logFilePath);

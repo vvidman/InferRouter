@@ -14,13 +14,12 @@
    limitations under the License.
 */
 
-using InferRouter.Core.Config;
+namespace InferRouter.Core.Interfaces;
 
-namespace InferRouter.Api;
-
-public class InferRouterOptions
+public interface IRoutingStrategy
 {
-    public string OperationLogPath { get; init; } = "/var/log/inferrouter/operations.jsonl";
-    public List<ProviderConfig> Providers { get; init; } = [];
-    public string RoutingStrategy { get; init; } = "ChainOfResponsibility";
+    // Returns an ordered list of cloud providers to attempt for this request.
+    // LlamaSharp (LocalGguf) providers are never included.
+    // May return an empty list if all cloud providers are exhausted.
+    IReadOnlyList<ILlmProvider> GetOrderedProviders();
 }
