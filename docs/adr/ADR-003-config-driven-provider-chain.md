@@ -21,19 +21,25 @@ The provider chain is defined entirely in `appsettings.json`. No provider name, 
 
 ```json
 {
+  "OperationLogPath": "/var/log/inferrouter",
+  "RoutingStrategy": "ChainOfResponsibility | WeightedRoundRobin | LeastUsed",
   "Providers": [
     {
       "Name": "string — used in logs and error messages",
-      "Type": "openai_compatible | local_gguf",
-      "BaseUrl": "required for openai_compatible, omitted for local_gguf",
+      "Type": "OpenAiCompatible | LocalGguf",
+      "BaseUrl": "required for OpenAiCompatible, omitted for LocalGguf",
       "Model": "model identifier string",
+      "ModelPath": "path to .gguf file — required for LocalGguf, omitted for OpenAiCompatible",
       "DailyRequestLimit": 0,
       "RequestsPerMinute": 0,
+      "ErrorCodePath": "error.code",
       "ErrorMappings": []
     }
   ]
 }
 ```
+
+`RoutingStrategy` defaults to `ChainOfResponsibility` if absent or unrecognised (see ADR-007). `ErrorCodePath` defaults to `error.code` (the OpenAI error response shape) if omitted.
 
 **Rules:**
 - The array is ordered — index 0 is the primary provider, subsequent entries are fallbacks in order

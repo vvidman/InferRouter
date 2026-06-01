@@ -28,7 +28,7 @@ Each provider configuration includes an `ErrorMappings` block that translates pr
 | `rate_limit` | Provider quota exhausted or request rate too high | Yes |
 | `model_unavailable` | Requested model is temporarily unavailable | Yes |
 | `server_error` | Provider-side infrastructure error | Yes, after one retry |
-| `auth_error` | Invalid or missing API key | No — logged as fatal |
+| `auth_error` | Invalid or missing API key | Yes — provider skipped permanently for this request (no retry) |
 | `unknown_error` | No mapping matched | Yes, treated conservatively |
 
 **Mapping resolution order:**

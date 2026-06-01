@@ -45,9 +45,12 @@ Despite being an in-process library, LlamaSharp is surfaced behind `ILlmProvider
 public interface ILlmProvider
 {
     string Name { get; }
+    ProviderType Type { get; }
     Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct);
 }
 ```
+
+`ProviderType` is an enum (`OpenAiCompatible`, `LocalGguf`). The `ProviderOrchestrator` uses `Type` to identify the LlamaSharp fallback without special-casing by name.
 
 This means:
 - The `FallbackChainExecutor` contains no special-casing for local vs. remote providers

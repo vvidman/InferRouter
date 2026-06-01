@@ -41,6 +41,7 @@ Fallback transitions are logged as separate `infer_fallback` entries, not as a m
 | Event | Description |
 |---|---|
 | `infer_started` | Request received by the router |
+| `infer_ordering` | Ordered provider list resolved by the active routing strategy |
 | `infer_completed` | Successful response returned to caller |
 | `infer_fallback` | Provider switch triggered |
 | `infer_failed` | All providers exhausted or errored |

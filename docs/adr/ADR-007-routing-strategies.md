@@ -23,16 +23,19 @@ Embedding all three behaviours in a single class via flags or conditionals would
 
 ### Refactor `FallbackChainExecutor` into `ProviderOrchestrator` with a pluggable `IRoutingStrategy`
 
-`FallbackChainExecutor` is refactored into `ProviderOrchestrator`. The class retains ownership of the fallback execution loop — retrying on transient errors, logging events, tracking rate limits — but delegates the question of *which provider to try next* to an injected `IRoutingStrategy`.
+`FallbackChainExecutor` is refactored into `ProviderOrchestrator`. The class retains ownership of the fallback execution loop — retrying on transient errors, logging events, tracking rate limits — but delegates the question of *which providers to attempt, and in what order* to an injected `IRoutingStrategy`.
 
 ```csharp
 public interface IRoutingStrategy
 {
-    ILlmProvider? SelectNext(IReadOnlyList<ILlmProvider> candidates, IReadOnlyList<ILlmProvider> alreadyTried);
+    // Returns an ordered list of cloud providers to attempt for this request.
+    // LlamaSharp (LocalGguf) providers are never included.
+    // May return an empty list if all cloud providers are exhausted.
+    IReadOnlyList<ILlmProvider> GetOrderedProviders();
 }
 ```
 
-`ProviderOrchestrator` calls `SelectNext` at each routing step, passing the full eligible candidate list and the providers already attempted in this request. The strategy returns the next provider to try, or `null` if no suitable candidate remains. This interface is sufficient for all three initial strategies and keeps the contract minimal.
+`ProviderOrchestrator` calls `GetOrderedProviders()` **once per request** at the start of execution, before any provider attempt. The strategy evaluates current rate-limit state and returns the complete ordered cloud provider list. `ProviderOrchestrator` appends the LlamaSharp fallback to this list, then iterates through all entries until one succeeds or all are exhausted. This interface is sufficient for all three initial strategies and keeps the contract minimal.
 
 ### Strategy set: `ChainOfResponsibility`, `WeightedRoundRobin`, `LeastUsed`
 
