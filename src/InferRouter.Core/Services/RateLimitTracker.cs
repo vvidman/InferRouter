@@ -98,6 +98,14 @@ public sealed class RateLimitTracker : IRateLimitTracker, IDisposable
         _logger.LogWarning("Provider {ProviderName} marked as rate-limit exhausted until UTC midnight reset.", providerName);
     }
 
+    public int GetDailyCount(string providerName)
+    {
+        lock (_lock)
+        {
+            return _states.TryGetValue(providerName, out var state) ? state.DailyCount : 0;
+        }
+    }
+
     private void ResetDailyCounters()
     {
         lock (_lock)

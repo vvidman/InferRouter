@@ -110,19 +110,34 @@ builder.Services.AddSingleton<IRoutingStrategy>(sp =>
         .Where(p => p.Type != ProviderType.LocalGguf)
         .ToList()
         .AsReadOnly();
+    var cloudConfigs = options.Providers
+        .Where(p => p.Type != ProviderType.LocalGguf)
+        .ToList()
+        .AsReadOnly();
     var tracker = sp.GetRequiredService<IRateLimitTracker>();
     var strategyName = options.RoutingStrategy;
 
-    if (!string.IsNullOrEmpty(strategyName) && strategyName != "ChainOfResponsibility")
+    return strategyName switch
+    {
+        "WeightedRoundRobin" => new WeightedRoundRobinStrategy(cloudProviders, cloudConfigs, tracker),
+        "LeastUsed" => new LeastUsedStrategy(cloudProviders, cloudConfigs, tracker),
+        "ChainOfResponsibility" or "" or null => new ChainOfResponsibilityStrategy(cloudProviders, tracker),
+        _ => FallbackToChain(sp, strategyName, cloudProviders, tracker)
+    };
+
+    static IRoutingStrategy FallbackToChain(
+        IServiceProvider sp,
+        string unknown,
+        IReadOnlyList<ILlmProvider> providers,
+        IRateLimitTracker tracker)
     {
         sp.GetRequiredService<ILoggerFactory>()
             .CreateLogger<ProviderOrchestrator>()
             .LogWarning(
                 "Unknown routing strategy '{StrategyName}'; falling back to ChainOfResponsibility.",
-                strategyName);
+                unknown);
+        return new ChainOfResponsibilityStrategy(providers, tracker);
     }
-
-    return new ChainOfResponsibilityStrategy(cloudProviders, tracker);
 });
 
 builder.Services.AddSingleton<ProviderOrchestrator>();
@@ -132,7 +147,7 @@ var app = builder.Build();
 
 var strategyLogger = app.Services.GetRequiredService<ILogger<ProviderOrchestrator>>();
 strategyLogger.LogInformation(
-    "ProviderOrchestrator — active routing strategy: {StrategyName}", "ChainOfResponsibility");
+    "ProviderOrchestrator — active routing strategy: {StrategyName}", options.RoutingStrategy);
 
 ChatCompletionsEndpoint.Map(app);
 HealthProvidersEndpoint.Map(app);

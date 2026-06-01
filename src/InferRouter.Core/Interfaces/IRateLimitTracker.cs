@@ -21,4 +21,5 @@ public interface IRateLimitTracker
     bool IsExhausted(string providerName);
     void RecordRequest(string providerName);
     void MarkExhausted(string providerName);
+    int GetDailyCount(string providerName);
 }
