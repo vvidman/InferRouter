@@ -103,10 +103,12 @@ builder.Services.AddSingleton<IReadOnlyList<ILlmProvider>>(sp =>
 });
 
 builder.Services.AddSingleton<FallbackChainExecutor>();
+builder.Services.AddSingleton<ProviderHealthChecker>();
 
 var app = builder.Build();
 
 ChatCompletionsEndpoint.Map(app);
+HealthProvidersEndpoint.Map(app);
 
 app.Run();
 return 0;
