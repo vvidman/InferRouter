@@ -270,4 +270,62 @@ public class ProviderOrchestratorTests
         var log = await File.ReadAllTextAsync(bundle.LogFilePath);
         Assert.Contains("infer_failed", log);
     }
+
+    // Unexpected exception fallback (safety net)
+
+    [Fact]
+    public async Task Provider_ThrowsUnexpectedException_FallsBackToNextProvider()
+    {
+        var p1 = MakeProvider("p1");
+        var p2 = MakeProvider("p2");
+        var request = MakeRequest();
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Unexpected error"));
+        p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeResult("p2"));
+
+        var bundle = BuildOrchestrator([p1, p2]);
+        var result = await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal("p2", result.ProviderName);
+        p2.Verify(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Provider_ThrowsUnexpectedException_LogsFallback()
+    {
+        var p1 = MakeProvider("p1");
+        var p2 = MakeProvider("p2");
+        var request = MakeRequest();
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Unexpected error"));
+        p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeResult("p2"));
+
+        var bundle = BuildOrchestrator([p1, p2]);
+        await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
+
+        var log = await File.ReadAllTextAsync(bundle.LogFilePath);
+        Assert.Contains("infer_fallback", log);
+        Assert.Contains("\"p1\"", log);
+    }
+
+    [Fact]
+    public async Task Provider_ThrowsOperationCanceledException_Propagates_NotTreatedAsFallback()
+    {
+        var p1 = MakeProvider("p1");
+        var p2 = MakeProvider("p2");
+        var request = MakeRequest();
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+        p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeResult("p2"));
+
+        var bundle = BuildOrchestrator([p1, p2]);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None));
+
+        p2.Verify(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }
