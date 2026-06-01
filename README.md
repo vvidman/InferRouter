@@ -79,12 +79,29 @@ flowchart LR
 
 ---
 
+## Routing Strategies
+
+InferRouter supports three routing strategies, configured via the `RoutingStrategy` field in `appsettings.json`. The strategy controls how the orchestrator picks which provider to try for each request.
+
+**`ChainOfResponsibility`** (default) — providers are tried in the order they appear in config. Predictable and easy to reason about; the right choice when providers have a clear priority order.
+
+**`WeightedRoundRobin`** — requests are distributed across providers in proportion to their `DailyRequestLimit`. Providers with higher quotas receive proportionally more traffic. Maximises total throughput across multiple free-tier providers. Providers with `DailyRequestLimit: 0` are excluded from weighted selection.
+
+**`LeastUsed`** — always routes to the provider with the lowest utilisation ratio (`DailyCount / DailyLimit`). Keeps quota consumption balanced across providers throughout the day. Tiebreaks randomly. Providers with `DailyRequestLimit: 0` are excluded.
+
+In all strategies, LlamaSharp (`local_gguf`) is held in reserve as a hard final fallback and is never part of strategy selection.
+
+→ See [docs/routing-strategies.md](docs/routing-strategies.md) for full detail, config examples, and a strategy selection guide.
+
+---
+
 ## Provider Configuration
 
-Providers are defined as an ordered list. The chain is tried top-to-bottom. LlamaSharp (`local_gguf`) must be last.
+Providers are defined as an ordered list. LlamaSharp (`local_gguf`) must be last.
 
 ```json
 {
+  "RoutingStrategy": "ChainOfResponsibility",
   "Providers": [
     {
       "Name": "provider-a",
