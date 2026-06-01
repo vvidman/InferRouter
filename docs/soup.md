@@ -8,7 +8,7 @@ All third-party components used in InferRouter. Versions should be pinned in the
 
 ### LlamaSharp
 - **Source:** NuGet — `LLamaSharp`
-- **Version:** latest stable at project init (pin in `.csproj`)
+- **Version:** 0.20.0
 - **Purpose:** In-process GGUF model inference. Used exclusively in `InferRouter.Providers` by `LlamaSharpProvider`.
 - **License:** MIT
 - **Notes:** Requires a platform-specific backend package. The appropriate backend must be selected based on the host hardware:
@@ -78,6 +78,36 @@ services:
 
 ---
 
+## Test / Dev Dependencies
+
+These packages are used only in test projects (`InferRouter.Tests`, `InferRouter.IntegrationTests`) and are not present in the production container image.
+
+### xUnit
+- **Source:** NuGet — `xunit` + `xunit.runner.visualstudio`
+- **Version:** 2.9.3 / 2.8.2
+- **Purpose:** Unit and integration test framework
+- **License:** Apache 2.0
+
+### Moq
+- **Source:** NuGet — `Moq`
+- **Version:** 4.20.72
+- **Purpose:** Mock object library for unit and integration tests
+- **License:** BSD 3-Clause
+
+### Microsoft.NET.Test.Sdk
+- **Source:** NuGet — `Microsoft.NET.Test.Sdk`
+- **Version:** 17.14.1
+- **Purpose:** Test runner infrastructure (required by xUnit runner)
+- **License:** MIT
+
+### Microsoft.AspNetCore.Mvc.Testing
+- **Source:** NuGet — `Microsoft.AspNetCore.Mvc.Testing`
+- **Version:** 10.0.0
+- **Purpose:** `WebApplicationFactory<TEntryPoint>` support for in-process integration tests against the full ASP.NET Core pipeline
+- **License:** MIT
+
+---
+
 ## Summary Table
 
 | Component | Type | NuGet / External | License |
@@ -89,6 +119,10 @@ services:
 | Docker Engine | Infrastructure | — | Apache 2.0 |
 | Docker Compose V2 | Infrastructure | — | Apache 2.0 |
 | GGUF model file | Runtime artifact | user-provided | varies per model |
+| xUnit | NuGet (test only) | `xunit` | Apache 2.0 |
+| Moq | NuGet (test only) | `Moq` | BSD 3-Clause |
+| Microsoft.NET.Test.Sdk | NuGet (test only) | `Microsoft.NET.Test.Sdk` | MIT |
+| Microsoft.AspNetCore.Mvc.Testing | NuGet (test only) | `Microsoft.AspNetCore.Mvc.Testing` | MIT |
 
 ---
 

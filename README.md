@@ -28,7 +28,7 @@ flowchart LR
 
     subgraph InferRouter
         API[OpenAI-compatible\nHTTP endpoint]
-        RC[FallbackChainExecutor]
+        RC[ProviderOrchestrator]
         RL[RateLimitTracker]
         EH[ErrorNormalizer]
         LOG[OperationLogger\nJSONL]
@@ -38,6 +38,7 @@ flowchart LR
         RC --> RL
         RC --> EH
         RC --> LOG
+        RC --> SR
     end
 
     subgraph Provider chain
@@ -150,6 +151,24 @@ The `ErrorMappings` block is per-provider. An `HttpStatus` match is required; `E
 ---
 
 ## Observability
+
+### Provider Health — `GET /health/providers`
+
+Returns a health probe result for every configured provider. Each provider is contacted with a minimal 1-token request to determine its current status.
+
+```json
+{
+  "providers": [
+    { "name": "groq", "status": "ok", "latency_ms": 312 },
+    { "name": "gemini", "status": "rate_limit", "http_status": 429 },
+    { "name": "llamasharp", "status": "ok", "latency_ms": 1840 }
+  ]
+}
+```
+
+Always returns `200 OK`. Provider status values: `ok`, `rate_limit`, `auth_error`, `server_error`, `model_unavailable`, `unknown_error`.
+
+---
 
 ### Live Stats — `GET /stats/live`
 
@@ -325,14 +344,19 @@ Any GGUF-format model compatible with LlamaSharp can be used. No API key require
 
 Done:
 - `ILlmProvider` interface + per-provider implementations (`OpenAiCompatibleProvider`, `LlamaSharpProvider`)
-- `FallbackChainExecutor` with configurable chain order
+- `ProviderOrchestrator` with three pluggable routing strategies (`ChainOfResponsibility`, `WeightedRoundRobin`, `LeastUsed`)
 - `RateLimitTracker` with UTC midnight reset and 60-second sliding RPM window
 - `ErrorNormalizer` with per-provider mapping config
 - `OperationLogger` (JSONL, append-only)
+- `ProviderHealthChecker` — live provider health probing via minimal 1-token requests
+- `StatsService` — live rate limit stats and historical log retrieval
 - OpenAI-compatible `/v1/chat/completions` endpoint + `/health` endpoint
+- `GET /health/providers` — per-provider health status
+- `GET /stats/live` and `GET /stats/history` — observability endpoints
 - Docker Compose stack with secret mounting and model volume
 - ADRs for all key design decisions (ADR-001 through ADR-006)
 - `SecretReader` refactored from static class to injectable singleton — keys read fresh per request in `OpenAiCompatibleProvider.CompleteAsync`, never cached in a field; Docker Secret rotation picked up without restart
+- Unit tests (`InferRouter.Tests`) and integration tests (`InferRouter.IntegrationTests`) covering all endpoints and core services
 
 ---
 

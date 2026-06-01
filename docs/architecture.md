@@ -9,7 +9,7 @@ InferRouter/
 ├── src/
 │   ├── InferRouter.Core/            ← interfaces, domain models, zero external deps
 │   ├── InferRouter.Providers/       ← ILlmProvider implementations
-│   └── InferRouter.Api/             ← ASP.NET Core host, endpoint, DI composition
+│   └── InferRouter.Api/             ← ASP.NET Core host, endpoints, DI composition
 ├── docker/
 │   └── docker-compose.yml
 ├── secrets.example/
@@ -37,16 +37,21 @@ InferRouter.Api  →  InferRouter.Providers  →  InferRouter.Core
 flowchart TD
     subgraph InferRouter.Api
         EP[ChatCompletionsEndpoint\nPOST /v1/chat/completions]
+        HPE[HealthProvidersEndpoint\nGET /health/providers]
+        SE[StatsEndpoint\nGET /stats/live\nGET /stats/history]
         DI[Composition Root\nProgram.cs]
     end
 
     subgraph InferRouter.Core
         IFACE[ILlmProvider]
-        FCE[FallbackChainExecutor]
+        STRAT[IRoutingStrategy]
+        PO[ProviderOrchestrator]
         RLT[RateLimitTracker]
         EN[ErrorNormalizer]
         OL[OperationLogger]
         SR[SecretReader]
+        PHC[ProviderHealthChecker]
+        SS[StatsService]
         MODELS[Domain Models\nInferRequest / InferResult\nProviderConfig / ErrorMapping\nInternalErrorCategory]
     end
 
@@ -55,11 +60,17 @@ flowchart TD
         LSP[LlamaSharpProvider]
     end
 
-    EP --> FCE
-    FCE --> RLT
-    FCE --> EN
-    FCE --> OL
-    FCE --> IFACE
+    EP --> PO
+    PO --> STRAT
+    PO --> RLT
+    PO --> EN
+    PO --> OL
+    PO --> IFACE
+    HPE --> PHC
+    PHC --> IFACE
+    PHC --> EN
+    SE --> SS
+    SS --> RLT
     OAP --> IFACE
     LSP --> IFACE
     OAP --> SR
@@ -80,7 +91,22 @@ public interface ILlmProvider
 }
 ```
 
-All providers — HTTP-based and local — implement this interface. The `FallbackChainExecutor` is never aware of the concrete type.
+All providers — HTTP-based and local — implement this interface. `ProviderOrchestrator` is never aware of the concrete type.
+
+---
+
+### IRoutingStrategy
+
+```csharp
+public interface IRoutingStrategy
+{
+    // Returns ordered cloud providers to attempt. LocalGguf providers never included.
+    // May return empty list if all cloud providers are exhausted.
+    IReadOnlyList<ILlmProvider> GetOrderedProviders();
+}
+```
+
+Three implementations: `ChainOfResponsibilityStrategy`, `WeightedRoundRobinStrategy`, `LeastUsedStrategy`. Selection is config-driven via `RoutingStrategy` in `appsettings.json`. The local fallback (`LocalGguf`) is always held in reserve by `ProviderOrchestrator` — strategies only handle cloud providers.
 
 ---
 
@@ -163,16 +189,18 @@ public class ErrorMapping
 
 ---
 
-### FallbackChainExecutor
+### ProviderOrchestrator
 
-The central routing component. Iterates the provider list, delegates error categorization to `ErrorNormalizer`, quota checks to `RateLimitTracker`, and all logging to `OperationLogger`.
+The central routing component. Asks `IRoutingStrategy` for the ordered cloud provider list, appends the local fallback, then attempts each in order. Delegates error categorization to `ErrorNormalizer`, quota tracking to `RateLimitTracker`, and all structured logging to `OperationLogger`.
 
 ```csharp
-public class FallbackChainExecutor(
-    IReadOnlyList<ILlmProvider> providers,
-    RateLimitTracker rateLimitTracker,
+public class ProviderOrchestrator(
+    IReadOnlyList<ILlmProvider> allProviders,
+    IRoutingStrategy routingStrategy,
+    IRateLimitTracker rateLimitTracker,
     ErrorNormalizer errorNormalizer,
-    OperationLogger logger)
+    OperationLogger operationLogger,
+    ILogger<ProviderOrchestrator> logger)
 {
     public async Task<InferResult> ExecuteAsync(InferRequest request, CancellationToken ct);
 }
@@ -181,18 +209,23 @@ public class FallbackChainExecutor(
 **Execution flow:**
 
 ```
-foreach provider in chain:
-    if RateLimitTracker.IsExhausted(provider)  → log rate_limit_hit, continue
+orderedCloud = routingStrategy.GetOrderedProviders()
+toAttempt   = orderedCloud + [localFallback]
+
+foreach provider in toAttempt:
     try:
         result = await provider.CompleteAsync(request, ct)
+        rateLimitTracker.RecordRequest(provider.Name)
         log infer_completed
         return result
     catch ProviderException ex:
-        category = ErrorNormalizer.Categorize(ex, provider.Config)
+        category = errorNormalizer.Categorize(ex.HttpStatus, ex.RawErrorCode, ex.Mappings)
+        if category == AuthError  → log warning, continue (permanent skip)
+        if category == RateLimit  → rateLimitTracker.MarkExhausted(provider.Name)
+        if category == ServerError → retry once inline, then continue
         log infer_fallback(reason: category)
-        if category == AuthError → do not retry, continue (permanent skip)
-        if category == ServerError → retry once, then continue
-        continue
+    catch HttpRequestException → log warning, continue
+    catch Exception            → log warning, continue
 
 log infer_failed
 throw InferRouterException("All providers exhausted")
@@ -203,7 +236,7 @@ throw InferRouterException("All providers exhausted")
 ### RateLimitTracker
 
 ```csharp
-public class RateLimitTracker
+public class RateLimitTracker : IRateLimitTracker, IDisposable
 {
     // Returns true if the provider's daily or per-minute quota is known to be exhausted
     public bool IsExhausted(string providerName);
@@ -214,21 +247,25 @@ public class RateLimitTracker
     // Called when a provider returns a rate limit error
     public void MarkExhausted(string providerName);
 
+    // Returns current quota stats for a provider
+    public ProviderRateLimitStats GetStats(string providerName);
+
     // Background timer callback — resets daily counters at UTC midnight
     private void ResetDailyCounters();
 }
 ```
 
-Internal state per provider:
+Internal state per provider (private nested class):
 
 ```csharp
-private record ProviderQuota(
-    int DailyLimit,
-    int RpmLimit,
-    int DailyCount,
-    bool HardExhausted,         // true after MarkExhausted() — stays until midnight reset
-    Queue<DateTimeOffset> RpmWindow
-);
+private sealed class ProviderState(int dailyLimit, int rpmLimit)
+{
+    public int DailyLimit { get; }
+    public int RpmLimit { get; }
+    public int DailyCount { get; set; }
+    public bool HardExhausted { get; set; }   // true after MarkExhausted(); reset at midnight
+    public Queue<DateTimeOffset> RpmWindow { get; }
+}
 ```
 
 ---
@@ -253,17 +290,52 @@ public class ErrorNormalizer
 ### OperationLogger
 
 ```csharp
-public class OperationLogger(string logFilePath)
+public class OperationLogger(string logDirectory)
 {
     public void LogStarted(InferRequest request);
     public void LogCompleted(InferResult result);
     public void LogFallback(string fromProvider, string toProvider, InternalErrorCategory reason, string requestId);
     public void LogFailed(string requestId, string reason);
     public void LogRateLimitHit(string providerName, string requestId);
+    public void LogProviderOrdering(string requestId, IReadOnlyList<string> orderedProviders);
 }
 ```
 
-All methods append a single JSONL line. The file is opened in append mode per write — no persistent file handle — to avoid locking issues in a single-instance deployment.
+All methods append a single JSONL line to `{logDirectory}/operations-{yyyy-MM-dd}.jsonl`. The file is opened in append mode per write — no persistent file handle — to avoid locking issues in a single-instance deployment.
+
+---
+
+### ProviderHealthChecker
+
+```csharp
+public class ProviderHealthChecker(
+    IReadOnlyList<ILlmProvider> providers,
+    ErrorNormalizer errorNormalizer)
+{
+    // Probes every provider with a minimal 1-token request and returns a health result per provider.
+    public async Task<IReadOnlyList<ProviderHealthResult>> CheckAllAsync(CancellationToken ct);
+}
+```
+
+Results carry `status` (`ok`, `rate_limit`, `auth_error`, `server_error`, `model_unavailable`, `unknown_error`), the raw HTTP status when applicable, and latency in milliseconds.
+
+---
+
+### StatsService
+
+```csharp
+public class StatsService(
+    IRateLimitTracker rateLimitTracker,
+    IReadOnlyList<ILlmProvider> providers,
+    string operationLogDirectory)
+{
+    // Returns current rate limit stats for all providers.
+    public IReadOnlyList<ProviderRateLimitStats> GetLiveStats();
+
+    // Returns (found, content) for a specific UTC date's operation log file.
+    public (bool found, string? content) GetHistoryForDate(DateOnly date);
+}
+```
 
 ---
 
@@ -331,22 +403,53 @@ The underlying `LLamaWeights` and `LLamaContext` instances are loaded once and r
 
 ```csharp
 // Registered in Program.cs as:
-// app.MapPost("/v1/chat/completions", ChatCompletionsEndpoint.HandleAsync);
+// ChatCompletionsEndpoint.Map(app);  →  app.MapPost("/v1/chat/completions", HandleAsync)
 
-public static class ChatCompletionsEndpoint
+public class ChatCompletionsEndpoint
 {
+    public static void Map(WebApplication app);
+
     public static async Task<IResult> HandleAsync(
         OpenAiChatRequest openAiRequest,
-        FallbackChainExecutor executor,
+        ProviderOrchestrator executor,
+        ILogger<ChatCompletionsEndpoint> logger,
         CancellationToken ct);
 }
 ```
 
 Responsibility:
 - Maps the inbound OpenAI request shape to `InferRequest`
-- Calls `FallbackChainExecutor.ExecuteAsync`
+- Calls `ProviderOrchestrator.ExecuteAsync`
 - Maps `InferResult` back to the OpenAI response shape
-- Returns `200 OK` with the response, or `503` if all providers are exhausted
+- Returns `200 OK` on success, `503` if all providers exhausted, `499` on cancellation, `500` on unexpected error
+
+### HealthProvidersEndpoint
+
+```csharp
+// GET /health/providers
+public class HealthProvidersEndpoint
+{
+    public static void Map(WebApplication app);
+    public static async Task<IResult> HandleAsync(ProviderHealthChecker checker, CancellationToken ct);
+}
+```
+
+Probes all configured providers and returns a JSON array of health results. Always returns `200 OK` — provider status is expressed in the response body, not the HTTP status code.
+
+### StatsEndpoint
+
+```csharp
+// GET /stats/live
+// GET /stats/history?date=yyyy-MM-dd
+public class StatsEndpoint
+{
+    public static void Map(WebApplication app);
+    public static IResult HandleLive(StatsService statsService);
+    public static IResult HandleHistory(StatsService statsService, string? date = null);
+}
+```
+
+`/stats/live` returns current rate limit counters for all providers. `/stats/history` returns the raw JSONL content of a day's operation log (today if no `date` param). Returns `404` if the log file does not exist, `400` for an invalid date format.
 
 ### OpenAI Wire Models
 
@@ -374,15 +477,16 @@ public record OpenAiChatResponse(
 
 ## Startup Validation (Program.cs)
 
-On startup, before the host starts accepting requests:
+On startup, before the host starts accepting requests, the following checks run. Steps 1–8 are fatal (non-zero exit on failure). Step 9 emits warnings only.
 
-1. Read provider list from `appsettings.json`
-2. Validate that at least one provider is defined
-3. Validate that the last provider is `local_gguf`
-4. Validate that all `openai_compatible` entries have a `BaseUrl`
-5. Validate that the `local_gguf` entry has a `ModelPath` that exists on disk
-6. Build the `ILlmProvider` list and register `FallbackChainExecutor` in DI
+1. Provider list must contain at least one entry
+2. No provider may have an empty `Name`
+3. Provider `Name` values must be unique
+4. The last provider must have `Type == LocalGguf`
+5. Exactly one `LocalGguf` entry is allowed
+6. All `OpenAiCompatible` providers must have a non-empty `BaseUrl`
+7. The `LocalGguf` provider's `ModelPath` must exist on disk (skipped in `Test` environment)
+8. `DailyRequestLimit` and `RequestsPerMinute` must be `>= 0` for all providers
+9. Warnings (non-fatal): `WeightedRoundRobin` selected but all cloud providers have `DailyRequestLimit: 0`; unrecognised `RoutingStrategy` value
 
-If steps 2–5 fail, the application exits with a non-zero code and a descriptive error message.
-
-API key availability is not validated at startup. `SecretReader.ReadApiKey` is called per request inside `OpenAiCompatibleProvider.CompleteAsync`; a missing key produces a `ProviderException(401)` which the `FallbackChainExecutor` treats as `AuthError` and skips to the next provider.
+API key availability is not validated at startup. `SecretReader.ReadApiKey` is called per request inside `OpenAiCompatibleProvider.CompleteAsync`; a missing key produces a `ProviderException(401)` which `ProviderOrchestrator` treats as `AuthError` and skips to the next provider.
