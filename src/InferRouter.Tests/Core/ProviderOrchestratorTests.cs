@@ -18,20 +18,21 @@ using InferRouter.Core.Config;
 using InferRouter.Core.Domain;
 using InferRouter.Core.Interfaces;
 using InferRouter.Core.Services;
+using InferRouter.Core.Strategies;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 
 namespace InferRouter.Tests.Core;
 
-public class FallbackChainExecutorTests
+public class ProviderOrchestratorTests
 {
-    private sealed record ExecutorBundle(
-        FallbackChainExecutor Executor,
-        RateLimitTracker Tracker,
+    private sealed record OrchestratorBundle(
+        ProviderOrchestrator Orchestrator,
+        IRateLimitTracker Tracker,
         string LogFilePath);
 
-    private static ExecutorBundle BuildExecutor(
+    private static OrchestratorBundle BuildOrchestrator(
         IReadOnlyList<Mock<ILlmProvider>> mocks,
         Func<string, ProviderConfig>? configFactory = null)
     {
@@ -39,14 +40,18 @@ public class FallbackChainExecutorTests
             .Select(m => configFactory?.Invoke(m.Object.Name) ?? new ProviderConfig { Name = m.Object.Name })
             .ToList();
         var tracker = new RateLimitTracker(providerConfigs, NullLogger<RateLimitTracker>.Instance);
+        var providers = mocks.Select(m => m.Object).ToList<ILlmProvider>().AsReadOnly();
+        var cloudProviders = providers.Where(p => p.Type != ProviderType.LocalGguf).ToList().AsReadOnly();
+        var strategy = new ChainOfResponsibilityStrategy(cloudProviders, tracker);
         var logPath = Path.Combine(Path.GetTempPath(), $"inferrouter-test-{Guid.NewGuid()}.jsonl");
-        var executor = new FallbackChainExecutor(
-            mocks.Select(m => m.Object).ToList(),
+        var orchestrator = new ProviderOrchestrator(
+            providers,
+            strategy,
             tracker,
             new ErrorNormalizer(),
             new OperationLogger(logPath),
-            NullLogger<FallbackChainExecutor>.Instance);
-        return new ExecutorBundle(executor, tracker, logPath);
+            NullLogger<ProviderOrchestrator>.Instance);
+        return new OrchestratorBundle(orchestrator, tracker, logPath);
     }
 
     private static Mock<ILlmProvider> MakeProvider(string name)
@@ -82,8 +87,8 @@ public class FallbackChainExecutorTests
         var expected = MakeResult("p1");
         p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(expected);
 
-        var bundle = BuildExecutor([p1]);
-        var result = await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+        var bundle = BuildOrchestrator([p1]);
+        var result = await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
 
         Assert.Equal(expected, result);
     }
@@ -95,8 +100,8 @@ public class FallbackChainExecutorTests
         var request = MakeRequest();
         p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p1"));
 
-        var bundle = BuildExecutor([p1]);
-        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+        var bundle = BuildOrchestrator([p1]);
+        await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
 
         var log = await File.ReadAllTextAsync(bundle.LogFilePath);
         Assert.Contains("infer_started", log);
@@ -110,8 +115,8 @@ public class FallbackChainExecutorTests
         var request = MakeRequest();
         p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p1"));
 
-        var bundle = BuildExecutor([p1], name => new ProviderConfig { Name = name, RequestsPerMinute = 1 });
-        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+        var bundle = BuildOrchestrator([p1], name => new ProviderConfig { Name = name, RequestsPerMinute = 1 });
+        await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
 
         Assert.True(bundle.Tracker.IsExhausted("p1"));
     }
@@ -126,9 +131,9 @@ public class FallbackChainExecutorTests
         var request = MakeRequest();
         p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p2"));
 
-        var bundle = BuildExecutor([p1, p2]);
+        var bundle = BuildOrchestrator([p1, p2]);
         bundle.Tracker.MarkExhausted("p1");
-        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+        await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
 
         p1.Verify(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()), Times.Never);
         p2.Verify(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()), Times.Once);
@@ -142,9 +147,9 @@ public class FallbackChainExecutorTests
         var request = MakeRequest();
         p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p2"));
 
-        var bundle = BuildExecutor([p1, p2]);
+        var bundle = BuildOrchestrator([p1, p2]);
         bundle.Tracker.MarkExhausted("p1");
-        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+        await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
 
         var log = await File.ReadAllTextAsync(bundle.LogFilePath);
         Assert.Contains("rate_limit_hit", log);
@@ -162,8 +167,8 @@ public class FallbackChainExecutorTests
         p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ThrowsAsync(MakeRateLimitException());
         p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p2"));
 
-        var bundle = BuildExecutor([p1, p2]);
-        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+        var bundle = BuildOrchestrator([p1, p2]);
+        await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
 
         Assert.True(bundle.Tracker.IsExhausted("p1"));
         p2.Verify(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()), Times.Once);
@@ -178,8 +183,8 @@ public class FallbackChainExecutorTests
         p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ThrowsAsync(MakeRateLimitException());
         p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p2"));
 
-        var bundle = BuildExecutor([p1, p2]);
-        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+        var bundle = BuildOrchestrator([p1, p2]);
+        await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
 
         var log = await File.ReadAllTextAsync(bundle.LogFilePath);
         Assert.Contains("infer_fallback", log);
@@ -198,8 +203,8 @@ public class FallbackChainExecutorTests
         p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ThrowsAsync(MakeAuthException());
         p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p2"));
 
-        var bundle = BuildExecutor([p1, p2]);
-        await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+        var bundle = BuildOrchestrator([p1, p2]);
+        await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
 
         Assert.False(bundle.Tracker.IsExhausted("p1"));
         p2.Verify(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()), Times.Once);
@@ -217,8 +222,8 @@ public class FallbackChainExecutorTests
             .ThrowsAsync(MakeServerException())
             .ReturnsAsync(expected);
 
-        var bundle = BuildExecutor([p1]);
-        var result = await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+        var bundle = BuildOrchestrator([p1]);
+        var result = await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
 
         Assert.Equal(expected, result);
         var log = await File.ReadAllTextAsync(bundle.LogFilePath);
@@ -237,8 +242,8 @@ public class FallbackChainExecutorTests
             .ThrowsAsync(MakeServerException());
         p2.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(expected);
 
-        var bundle = BuildExecutor([p1, p2]);
-        var result = await bundle.Executor.ExecuteAsync(request, CancellationToken.None);
+        var bundle = BuildOrchestrator([p1, p2]);
+        var result = await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
 
         Assert.Equal(expected, result);
         var log = await File.ReadAllTextAsync(bundle.LogFilePath);
@@ -254,9 +259,9 @@ public class FallbackChainExecutorTests
         var request = MakeRequest();
         p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ThrowsAsync(MakeAuthException());
 
-        var bundle = BuildExecutor([p1]);
+        var bundle = BuildOrchestrator([p1]);
         await Assert.ThrowsAsync<InferRouterException>(() =>
-            bundle.Executor.ExecuteAsync(request, CancellationToken.None));
+            bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None));
 
         var log = await File.ReadAllTextAsync(bundle.LogFilePath);
         Assert.Contains("infer_failed", log);

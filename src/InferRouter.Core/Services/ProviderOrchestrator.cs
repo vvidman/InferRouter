@@ -20,27 +20,39 @@ using Microsoft.Extensions.Logging;
 
 namespace InferRouter.Core.Services;
 
-public class FallbackChainExecutor(
-    IReadOnlyList<ILlmProvider> providers,
-    RateLimitTracker rateLimitTracker,
+public class ProviderOrchestrator(
+    IReadOnlyList<ILlmProvider> allProviders,
+    IRoutingStrategy routingStrategy,
+    IRateLimitTracker rateLimitTracker,
     ErrorNormalizer errorNormalizer,
     OperationLogger operationLogger,
-    ILogger<FallbackChainExecutor> logger)
+    ILogger<ProviderOrchestrator> logger)
 {
+    private readonly ILlmProvider? _localFallback =
+        allProviders.FirstOrDefault(p => p.Type == ProviderType.LocalGguf);
+
     public async Task<InferResult> ExecuteAsync(InferRequest request, CancellationToken ct)
     {
         operationLogger.LogStarted(request);
 
-        for (int i = 0; i < providers.Count; i++)
-        {
-            var provider = providers[i];
-            var nextProviderName = i + 1 < providers.Count ? providers[i + 1].Name : string.Empty;
+        var orderedCloud = routingStrategy.GetOrderedProviders();
 
-            if (rateLimitTracker.IsExhausted(provider.Name))
-            {
-                operationLogger.LogRateLimitHit(provider.Name, request.RequestId);
-                continue;
-            }
+        // Log rate_limit_hit for cloud providers excluded by the strategy (they are exhausted)
+        var allCloud = allProviders.Where(p => p.Type != ProviderType.LocalGguf).ToList();
+        foreach (var skipped in allCloud.Where(p => orderedCloud.All(op => op.Name != p.Name)))
+            operationLogger.LogRateLimitHit(skipped.Name, request.RequestId);
+
+        operationLogger.LogProviderOrdering(request.RequestId,
+            orderedCloud.Select(p => p.Name).ToList().AsReadOnly());
+
+        var toAttempt = new List<ILlmProvider>(orderedCloud);
+        if (_localFallback != null)
+            toAttempt.Add(_localFallback);
+
+        for (int i = 0; i < toAttempt.Count; i++)
+        {
+            var provider = toAttempt[i];
+            var nextProviderName = i + 1 < toAttempt.Count ? toAttempt[i + 1].Name : string.Empty;
 
             try
             {

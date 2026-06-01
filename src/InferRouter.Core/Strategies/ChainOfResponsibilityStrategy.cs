@@ -14,13 +14,17 @@
    limitations under the License.
 */
 
-using InferRouter.Core.Config;
+using InferRouter.Core.Interfaces;
 
-namespace InferRouter.Api;
+namespace InferRouter.Core.Strategies;
 
-public class InferRouterOptions
+public class ChainOfResponsibilityStrategy(
+    IReadOnlyList<ILlmProvider> cloudProviders,
+    IRateLimitTracker rateLimitTracker) : IRoutingStrategy
 {
-    public string OperationLogPath { get; init; } = "/var/log/inferrouter/operations.jsonl";
-    public List<ProviderConfig> Providers { get; init; } = [];
-    public string RoutingStrategy { get; init; } = "ChainOfResponsibility";
+    public IReadOnlyList<ILlmProvider> GetOrderedProviders() =>
+        cloudProviders
+            .Where(p => !rateLimitTracker.IsExhausted(p.Name))
+            .ToList()
+            .AsReadOnly();
 }

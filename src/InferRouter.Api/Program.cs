@@ -19,6 +19,7 @@ using InferRouter.Api.Endpoints;
 using InferRouter.Core.Domain;
 using InferRouter.Core.Interfaces;
 using InferRouter.Core.Services;
+using InferRouter.Core.Strategies;
 using InferRouter.Providers;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -68,7 +69,7 @@ builder.Services.Configure<InferRouterOptions>(builder.Configuration.GetSection(
 builder.Services.AddSingleton<SecretReader>();
 builder.Services.AddSingleton<ErrorNormalizer>();
 
-builder.Services.AddSingleton<RateLimitTracker>(sp =>
+builder.Services.AddSingleton<IRateLimitTracker>(sp =>
     new RateLimitTracker(
         options.Providers.AsReadOnly(),
         sp.GetRequiredService<ILogger<RateLimitTracker>>()));
@@ -102,10 +103,36 @@ builder.Services.AddSingleton<IReadOnlyList<ILlmProvider>>(sp =>
     return providers.AsReadOnly();
 });
 
-builder.Services.AddSingleton<FallbackChainExecutor>();
+builder.Services.AddSingleton<IRoutingStrategy>(sp =>
+{
+    var allProviders = sp.GetRequiredService<IReadOnlyList<ILlmProvider>>();
+    var cloudProviders = allProviders
+        .Where(p => p.Type != ProviderType.LocalGguf)
+        .ToList()
+        .AsReadOnly();
+    var tracker = sp.GetRequiredService<IRateLimitTracker>();
+    var strategyName = options.RoutingStrategy;
+
+    if (!string.IsNullOrEmpty(strategyName) && strategyName != "ChainOfResponsibility")
+    {
+        sp.GetRequiredService<ILoggerFactory>()
+            .CreateLogger<ProviderOrchestrator>()
+            .LogWarning(
+                "Unknown routing strategy '{StrategyName}'; falling back to ChainOfResponsibility.",
+                strategyName);
+    }
+
+    return new ChainOfResponsibilityStrategy(cloudProviders, tracker);
+});
+
+builder.Services.AddSingleton<ProviderOrchestrator>();
 builder.Services.AddSingleton<ProviderHealthChecker>();
 
 var app = builder.Build();
+
+var strategyLogger = app.Services.GetRequiredService<ILogger<ProviderOrchestrator>>();
+strategyLogger.LogInformation(
+    "ProviderOrchestrator — active routing strategy: {StrategyName}", "ChainOfResponsibility");
 
 ChatCompletionsEndpoint.Map(app);
 HealthProvidersEndpoint.Map(app);

@@ -14,13 +14,11 @@
    limitations under the License.
 */
 
-using InferRouter.Core.Config;
+namespace InferRouter.Core.Interfaces;
 
-namespace InferRouter.Api;
-
-public class InferRouterOptions
+public interface IRateLimitTracker
 {
-    public string OperationLogPath { get; init; } = "/var/log/inferrouter/operations.jsonl";
-    public List<ProviderConfig> Providers { get; init; } = [];
-    public string RoutingStrategy { get; init; } = "ChainOfResponsibility";
+    bool IsExhausted(string providerName);
+    void RecordRequest(string providerName);
+    void MarkExhausted(string providerName);
 }
