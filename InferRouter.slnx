@@ -3,4 +3,5 @@
   <Project Path="src/InferRouter.Providers/InferRouter.Providers.csproj" />
   <Project Path="src/InferRouter.Api/InferRouter.Api.csproj" />
   <Project Path="src/InferRouter.Tests/InferRouter.Tests.csproj" />
+  <Project Path="src/InferRouter.IntegrationTests/InferRouter.IntegrationTests.csproj" />
 </Solution>

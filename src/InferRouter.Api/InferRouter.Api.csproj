@@ -5,6 +5,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>InferRouter.IntegrationTests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\InferRouter.Core\InferRouter.Core.csproj" />
     <ProjectReference Include="..\InferRouter.Providers\InferRouter.Providers.csproj" />
   </ItemGroup>
