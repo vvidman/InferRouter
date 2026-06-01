@@ -34,14 +34,38 @@ if (options.Providers.Count == 0)
     return 1;
 }
 
-// Startup validation 2: last provider must be LocalGguf (local fallback)
+// Startup validation 2: no provider may have an empty Name
+var emptyNamesError = StartupValidator.ValidateNoEmptyNames(options.Providers);
+if (emptyNamesError != null)
+{
+    Console.Error.WriteLine($"FATAL: {emptyNamesError}");
+    return 1;
+}
+
+// Startup validation 3: provider Names must be unique
+var duplicateNamesError = StartupValidator.ValidateNoDuplicateNames(options.Providers);
+if (duplicateNamesError != null)
+{
+    Console.Error.WriteLine($"FATAL: {duplicateNamesError}");
+    return 1;
+}
+
+// Startup validation 4: last provider must be LocalGguf (local fallback)
 if (options.Providers[^1].Type != ProviderType.LocalGguf)
 {
     Console.Error.WriteLine("FATAL: The last entry in InferRouter.Providers must have Type == LocalGguf.");
     return 1;
 }
 
-// Startup validation 3: all OpenAiCompatible providers must have a non-empty BaseUrl
+// Startup validation 5: exactly one LocalGguf entry is allowed
+var multipleGgufError = StartupValidator.ValidateNoMultipleLocalGguf(options.Providers);
+if (multipleGgufError != null)
+{
+    Console.Error.WriteLine($"FATAL: {multipleGgufError}");
+    return 1;
+}
+
+// Startup validation 6: all OpenAiCompatible providers must have a non-empty BaseUrl
 var missingBaseUrl = options.Providers
     .Where(p => p.Type == ProviderType.OpenAiCompatible && string.IsNullOrEmpty(p.BaseUrl))
     .Select(p => p.Name)
@@ -54,12 +78,21 @@ if (missingBaseUrl.Count > 0)
     return 1;
 }
 
-// Startup validation 4: LocalGguf ModelPath must exist on disk
+// Startup validation 7: LocalGguf ModelPath must exist on disk
 var ggufConfig = options.Providers.First(p => p.Type == ProviderType.LocalGguf);
 if (!File.Exists(ggufConfig.ModelPath))
 {
     Console.Error.WriteLine(
         $"FATAL: LocalGguf model not found at '{ggufConfig.ModelPath}'. Ensure the model file exists and ModelPath is correct.");
+    return 1;
+}
+
+// Startup validation 8: DailyRequestLimit and RequestsPerMinute must be >= 0
+var negativeLimitErrors = StartupValidator.ValidateNoNegativeLimits(options.Providers);
+if (negativeLimitErrors.Count > 0)
+{
+    foreach (var error in negativeLimitErrors)
+        Console.Error.WriteLine($"FATAL: {error}");
     return 1;
 }
 
@@ -121,23 +154,8 @@ builder.Services.AddSingleton<IRoutingStrategy>(sp =>
     {
         "WeightedRoundRobin" => new WeightedRoundRobinStrategy(cloudProviders, cloudConfigs, tracker),
         "LeastUsed" => new LeastUsedStrategy(cloudProviders, cloudConfigs, tracker),
-        "ChainOfResponsibility" or "" or null => new ChainOfResponsibilityStrategy(cloudProviders, tracker),
-        _ => FallbackToChain(sp, strategyName, cloudProviders, tracker)
+        _ => new ChainOfResponsibilityStrategy(cloudProviders, tracker)
     };
-
-    static IRoutingStrategy FallbackToChain(
-        IServiceProvider sp,
-        string unknown,
-        IReadOnlyList<ILlmProvider> providers,
-        IRateLimitTracker tracker)
-    {
-        sp.GetRequiredService<ILoggerFactory>()
-            .CreateLogger<ProviderOrchestrator>()
-            .LogWarning(
-                "Unknown routing strategy '{StrategyName}'; falling back to ChainOfResponsibility.",
-                unknown);
-        return new ChainOfResponsibilityStrategy(providers, tracker);
-    }
 });
 
 builder.Services.AddSingleton<ProviderOrchestrator>();
@@ -149,6 +167,17 @@ builder.Services.AddSingleton(sp => new StatsService(
     options.OperationLogPath));
 
 var app = builder.Build();
+
+// Startup validation 9: strategy-specific warnings (logged, do not block startup)
+var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
+
+var weightedWarn = StartupValidator.WarnWeightedRoundRobinAllZeroDailyLimits(options.Providers, options.RoutingStrategy);
+if (weightedWarn != null)
+    startupLogger.LogWarning("{Warning}", weightedWarn);
+
+var unknownStrategyWarn = StartupValidator.WarnUnknownRoutingStrategy(options.RoutingStrategy);
+if (unknownStrategyWarn != null)
+    startupLogger.LogWarning("{Warning}", unknownStrategyWarn);
 
 var strategyLogger = app.Services.GetRequiredService<ILogger<ProviderOrchestrator>>();
 strategyLogger.LogInformation(
