@@ -14,6 +14,8 @@
    limitations under the License.
 */
 
+using InferRouter.Core.Domain;
+
 namespace InferRouter.Core.Interfaces;
 
 public interface IRateLimitTracker
@@ -22,4 +24,5 @@ public interface IRateLimitTracker
     void RecordRequest(string providerName);
     void MarkExhausted(string providerName);
     int GetDailyCount(string providerName);
+    ProviderRateLimitStats GetStats(string providerName);
 }

@@ -19,13 +19,16 @@ using InferRouter.Core.Domain;
 
 namespace InferRouter.Core.Services;
 
-public class OperationLogger(string logFilePath)
+public class OperationLogger(string logDirectory)
 {
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         WriteIndented = false
     };
+
+    private string GetCurrentLogFilePath() =>
+        Path.Combine(logDirectory, $"operations-{DateOnly.FromDateTime(DateTime.UtcNow):yyyy-MM-dd}.jsonl");
 
     public void LogStarted(InferRequest request) =>
         AppendLine(new
@@ -91,10 +94,8 @@ public class OperationLogger(string logFilePath)
 
     private void AppendLine<T>(T entry)
     {
-        var dir = Path.GetDirectoryName(logFilePath);
-        if (!string.IsNullOrEmpty(dir))
-            Directory.CreateDirectory(dir);
-
+        Directory.CreateDirectory(logDirectory);
+        var logFilePath = GetCurrentLogFilePath();
         var line = JsonSerializer.Serialize(entry, _jsonOptions);
         File.AppendAllText(logFilePath, line + "\n");
     }

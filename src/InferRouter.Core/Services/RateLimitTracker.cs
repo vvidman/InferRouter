@@ -15,6 +15,7 @@
 */
 
 using InferRouter.Core.Config;
+using InferRouter.Core.Domain;
 using InferRouter.Core.Interfaces;
 using Microsoft.Extensions.Logging;
 
@@ -103,6 +104,28 @@ public sealed class RateLimitTracker : IRateLimitTracker, IDisposable
         lock (_lock)
         {
             return _states.TryGetValue(providerName, out var state) ? state.DailyCount : 0;
+        }
+    }
+
+    public ProviderRateLimitStats GetStats(string providerName)
+    {
+        lock (_lock)
+        {
+            if (!_states.TryGetValue(providerName, out var state))
+                return new ProviderRateLimitStats(providerName, 0, 0, 0, 0, false);
+
+            PruneRpmWindow(state);
+            var exhausted = state.HardExhausted
+                || (state.DailyLimit > 0 && state.DailyCount >= state.DailyLimit)
+                || (state.RpmLimit > 0 && state.RpmWindow.Count >= state.RpmLimit);
+
+            return new ProviderRateLimitStats(
+                providerName,
+                state.DailyLimit,
+                state.DailyCount,
+                state.RpmLimit,
+                state.RpmWindow.Count,
+                exhausted);
         }
     }
 

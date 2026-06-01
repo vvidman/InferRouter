@@ -149,7 +149,36 @@ The `ErrorMappings` block is per-provider. An `HttpStatus` match is required; `E
 
 ---
 
+## Observability
+
+### Live Stats — `GET /stats/live`
+
+Returns current rate limit state for all configured providers:
+
+```json
+{
+  "providers": [
+    { "provider_name": "groq", "daily_limit": 14400, "daily_count": 312, "rpm_limit": 30, "rpm_window_count": 4, "is_exhausted": false },
+    { "provider_name": "gemini", "daily_limit": 1500, "daily_count": 1500, "rpm_limit": 10, "rpm_window_count": 0, "is_exhausted": true },
+    { "provider_name": "llamasharp", "daily_limit": 0, "daily_count": 0, "rpm_limit": 0, "rpm_window_count": 0, "is_exhausted": false }
+  ]
+}
+```
+
+### Log History — `GET /stats/history`
+
+Returns the raw JSONL content of a day's operation log.
+
+- `GET /stats/history` — today's log (UTC)
+- `GET /stats/history?date=2026-05-25` — log for a specific date
+
+Returns `200 OK` with `Content-Type: text/plain` if the file exists, `404` if it does not.
+
+---
+
 ## Operation Log
+
+Log files are written to the directory configured by `OperationLogPath` (default: `/var/log/inferrouter`), one file per UTC day: `operations-{yyyy-MM-dd}.jsonl`. Each new write after midnight automatically goes to the new day's file.
 
 Every inference call produces one or more JSONL entries. The schema is provider-agnostic.
 

@@ -1,0 +1,37 @@
+/*
+   Copyright 2026 Viktor Vidman (vvidman)
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+using InferRouter.Core.Domain;
+using InferRouter.Core.Interfaces;
+
+namespace InferRouter.Core.Services;
+
+public class StatsService(
+    IRateLimitTracker rateLimitTracker,
+    IReadOnlyList<ILlmProvider> providers,
+    string operationLogDirectory)
+{
+    public IReadOnlyList<ProviderRateLimitStats> GetLiveStats() =>
+        providers.Select(p => rateLimitTracker.GetStats(p.Name)).ToList().AsReadOnly();
+
+    public (bool found, string? content) GetHistoryForDate(DateOnly date)
+    {
+        var path = Path.Combine(operationLogDirectory, $"operations-{date:yyyy-MM-dd}.jsonl");
+        if (!File.Exists(path))
+            return (false, null);
+        return (true, File.ReadAllText(path));
+    }
+}

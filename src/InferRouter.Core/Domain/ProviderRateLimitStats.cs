@@ -14,13 +14,13 @@
    limitations under the License.
 */
 
-using InferRouter.Core.Config;
+namespace InferRouter.Core.Domain;
 
-namespace InferRouter.Api;
-
-public class InferRouterOptions
-{
-    public string OperationLogPath { get; init; } = "/var/log/inferrouter";
-    public List<ProviderConfig> Providers { get; init; } = [];
-    public string RoutingStrategy { get; init; } = "ChainOfResponsibility";
-}
+public record ProviderRateLimitStats(
+    string ProviderName,
+    int DailyLimit,
+    int DailyCount,
+    int RpmLimit,
+    int RpmWindowCount,
+    bool IsExhausted
+);
