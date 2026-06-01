@@ -15,6 +15,7 @@
 */
 
 using System.Net;
+using Xunit;
 
 namespace InferRouter.IntegrationTests;
 

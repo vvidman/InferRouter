@@ -85,7 +85,7 @@ public class LlamaSharpProviderTests
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+        await Assert.ThrowsAsync<TaskCanceledException>(() =>
             provider.CompleteAsync(request, cts.Token));
     }
 
@@ -98,7 +98,7 @@ public class LlamaSharpProviderTests
         cts.Cancel();
 
         // Cancellation should not set the permanent failure flag
-        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+        await Assert.ThrowsAsync<TaskCanceledException>(() =>
             provider.CompleteAsync(request, cts.Token));
 
         // The permanent flag must not be set — a subsequent call with a valid

@@ -161,7 +161,7 @@ public class RateLimitTrackerTests
         tracker.RecordRequest("p");
 
         // 3 old entries pruned, 1 new entry added
-        Assert.Equal(1, rpmWindow.Count);
+        Assert.Single(rpmWindow);
     }
 
     // --- Unknown provider ---

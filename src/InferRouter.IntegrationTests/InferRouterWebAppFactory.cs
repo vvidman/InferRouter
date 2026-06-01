@@ -16,6 +16,7 @@
 
 using InferRouter.Core.Domain;
 using InferRouter.Core.Interfaces;
+using InferRouter.Core.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -34,11 +35,19 @@ public class InferRouterWebAppFactory : WebApplicationFactory<Program>
         builder.ConfigureAppConfiguration((context, config) =>
         {
             config.SetBasePath(AppContext.BaseDirectory)
-                  .AddJsonFile("appsettings.Test.json", optional: false);
+                  .AddJsonFile("appsettings.Test.json", optional: false)
+                  .AddInMemoryCollection(new Dictionary<string, string?>
+                  {
+                      ["InferRouter:OperationLogPath"] = Path.Combine(
+                          Path.GetTempPath(), $"inferrouter-test-{Guid.NewGuid():N}")
+                  });
         });
 
         builder.ConfigureTestServices(services =>
         {
+            services.AddSingleton<OperationLogger>(_ =>
+                new OperationLogger(Path.Combine(Path.GetTempPath(), $"inferrouter-test-{Guid.NewGuid():N}")));
+
             services.AddSingleton<IReadOnlyList<ILlmProvider>>(_ =>
             {
                 var cloudProvider = new Mock<ILlmProvider>();
