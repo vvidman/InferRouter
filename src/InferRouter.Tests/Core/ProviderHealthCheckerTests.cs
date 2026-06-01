@@ -172,4 +172,40 @@ public class ProviderHealthCheckerTests
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
             checker.CheckAllAsync(CancellationToken.None));
     }
+
+    [Fact]
+    public async Task RateLimitTracker_NeverCalledDuringHealthCheck()
+    {
+        var p = MakeProvider("groq");
+        p.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+         .ReturnsAsync(MakeResult("groq"));
+        var tracker = new Mock<IRateLimitTracker>();
+
+        var checker = BuildChecker(p);
+        await checker.CheckAllAsync(CancellationToken.None);
+
+        tracker.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task OperationLogger_NeverCalledDuringHealthCheck()
+    {
+        var p = MakeProvider("groq");
+        p.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+         .ReturnsAsync(MakeResult("groq"));
+        var logDir = Path.Combine(Path.GetTempPath(), $"inferrouter-health-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(logDir);
+
+        try
+        {
+            var checker = BuildChecker(p);
+            await checker.CheckAllAsync(CancellationToken.None);
+
+            Assert.Empty(Directory.GetFiles(logDir));
+        }
+        finally
+        {
+            Directory.Delete(logDir, true);
+        }
+    }
 }

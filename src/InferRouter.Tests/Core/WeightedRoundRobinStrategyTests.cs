@@ -176,13 +176,13 @@ public class WeightedRoundRobinStrategyTests
     [Fact]
     public void WeightedSelection_HigherWeightAppearFirstMoreOften()
     {
-        // p1 has ~90.6% weight, p2 has ~9.4%. Over 1000 runs, p1 should lead >70% of the time.
+        // p1 has 90% weight, p2 has 10%. Over 1000 runs, p1 should lead ≥80% of the time.
         var p1 = MakeProvider("p1");
         var p2 = MakeProvider("p2");
         var configs = new List<ProviderConfig>
         {
-            new() { Name = "p1", DailyRequestLimit = 14400 },
-            new() { Name = "p2", DailyRequestLimit = 1500 },
+            new() { Name = "p1", DailyRequestLimit = 9000 },
+            new() { Name = "p2", DailyRequestLimit = 1000 },
         };
         var tracker = MakeTracker();
         var strategy = Build(
@@ -198,7 +198,7 @@ public class WeightedRoundRobinStrategyTests
                 p1First++;
         }
 
-        // With 90.6% weight, p1 should appear first in well over 70% of runs
-        Assert.True(p1First > 700, $"Expected p1 first >700/1000 times, got {p1First}");
+        // With 90% weight, p1 should appear first in at least 800 of 1000 runs
+        Assert.True(p1First >= 800, $"Expected p1 first ≥800/1000 times, got {p1First}");
     }
 }
