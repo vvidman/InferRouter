@@ -78,9 +78,9 @@ if (missingBaseUrl.Count > 0)
     return 1;
 }
 
-// Startup validation 7: LocalGguf ModelPath must exist on disk
+// Startup validation 7: LocalGguf ModelPath must exist on disk (skipped in Test environment)
 var ggufConfig = options.Providers.First(p => p.Type == ProviderType.LocalGguf);
-if (!File.Exists(ggufConfig.ModelPath))
+if (!builder.Environment.IsEnvironment("Test") && !File.Exists(ggufConfig.ModelPath))
 {
     Console.Error.WriteLine(
         $"FATAL: LocalGguf model not found at '{ggufConfig.ModelPath}'. Ensure the model file exists and ModelPath is correct.");
@@ -182,6 +182,8 @@ if (unknownStrategyWarn != null)
 var strategyLogger = app.Services.GetRequiredService<ILogger<ProviderOrchestrator>>();
 strategyLogger.LogInformation(
     "ProviderOrchestrator — active routing strategy: {StrategyName}", options.RoutingStrategy);
+
+app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
 
 ChatCompletionsEndpoint.Map(app);
 HealthProvidersEndpoint.Map(app);
