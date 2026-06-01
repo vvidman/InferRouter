@@ -31,6 +31,8 @@ public class LlamaSharpProvider : ILlmProvider, IDisposable
 
     private LLamaWeights? _weights;
     private LLamaContext? _context;
+    private bool _permanentlyFailed;
+    private Exception? _permanentFailureCause;
     private bool _disposed;
 
     public string Name => _config.Name;
@@ -43,6 +45,10 @@ public class LlamaSharpProvider : ILlmProvider, IDisposable
 
     public async Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct)
     {
+        if (_permanentlyFailed)
+            throw new ProviderException(500, "model_permanently_failed", [],
+                $"LlamaSharp provider is permanently unavailable: {_permanentFailureCause?.Message}");
+
         await _semaphore.WaitAsync(ct);
         try
         {
@@ -55,29 +61,39 @@ public class LlamaSharpProvider : ILlmProvider, IDisposable
 
             var sw = Stopwatch.StartNew();
 
-            var executor = new InteractiveExecutor(_context!);
-            var inferenceParams = new InferenceParams
+            try
             {
-                MaxTokens = request.MaxTokens ?? 256,
-                AntiPrompts = ["\nuser:", "\nUser:"]
-            };
+                var executor = new InteractiveExecutor(_context!);
+                var inferenceParams = new InferenceParams
+                {
+                    MaxTokens = request.MaxTokens ?? 256,
+                    AntiPrompts = ["\nuser:", "\nUser:"]
+                };
 
-            var sb = new StringBuilder();
-            await foreach (var token in executor.InferAsync(promptBuilder.ToString(), inferenceParams, ct))
-                sb.Append(token);
+                var sb = new StringBuilder();
+                await foreach (var token in executor.InferAsync(promptBuilder.ToString(), inferenceParams, ct))
+                    sb.Append(token);
 
-            sw.Stop();
+                sw.Stop();
 
-            return new InferResult(
-                RequestId: request.RequestId,
-                ProviderName: _config.Name,
-                Model: Path.GetFileName(_config.ModelPath) ?? "",
-                Content: sb.ToString().Trim(),
-                PromptTokens: 0,
-                CompletionTokens: 0,
-                LatencyMs: sw.ElapsedMilliseconds,
-                WasFallback: false
-            );
+                return new InferResult(
+                    RequestId: request.RequestId,
+                    ProviderName: _config.Name,
+                    Model: Path.GetFileName(_config.ModelPath) ?? "",
+                    Content: sb.ToString().Trim(),
+                    PromptTokens: 0,
+                    CompletionTokens: 0,
+                    LatencyMs: sw.ElapsedMilliseconds,
+                    WasFallback: false
+                );
+            }
+            catch (ProviderException) { throw; }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                throw new ProviderException(500, "inference_failed", [],
+                    $"LlamaSharp inference failed: {ex.Message}", ex);
+            }
         }
         finally
         {
@@ -87,17 +103,27 @@ public class LlamaSharpProvider : ILlmProvider, IDisposable
 
     private async Task EnsureLoadedAsync()
     {
-        if (_context is not null)
-            return;
+        if (_context is not null) return;
+        if (_permanentlyFailed)
+            throw new ProviderException(500, "model_permanently_failed", []);
 
-        if (!File.Exists(_config.ModelPath))
-            throw new InvalidOperationException(
-                $"GGUF model file not found at '{_config.ModelPath}'. " +
-                "Ensure the model file exists and ModelPath in configuration is correct.");
-
-        var modelParams = new ModelParams(_config.ModelPath!);
-        _weights = await Task.Run(() => LLamaWeights.LoadFromFile(modelParams));
-        _context = _weights.CreateContext(modelParams);
+        try
+        {
+            var modelParams = new ModelParams(_config.ModelPath!);
+            _weights = await Task.Run(() => LLamaWeights.LoadFromFile(modelParams));
+            _context = _weights.CreateContext(modelParams);
+        }
+        catch (ProviderException) { throw; }
+        catch (Exception ex)
+        {
+            _permanentlyFailed = true;
+            _permanentFailureCause = ex;
+            _weights?.Dispose();
+            _weights = null;
+            _context = null;
+            throw new ProviderException(500, "model_load_failed", [],
+                $"Failed to load GGUF model from '{_config.ModelPath}': {ex.Message}", ex);
+        }
     }
 
     public void Dispose()

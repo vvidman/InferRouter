@@ -98,6 +98,14 @@ public class ProviderOrchestrator(
                 logger.LogWarning(ex, "Provider {ProviderName} network error; falling back.", provider.Name);
                 operationLogger.LogFallback(provider.Name, nextProviderName, InternalErrorCategory.ServerError, request.RequestId);
             }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex,
+                    "Provider {ProviderName} threw an unexpected exception; falling back.",
+                    provider.Name);
+                operationLogger.LogFallback(provider.Name, nextProviderName,
+                    InternalErrorCategory.UnknownError, request.RequestId);
+            }
         }
 
         operationLogger.LogFailed(request.RequestId, "All providers exhausted");
