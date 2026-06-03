@@ -1,0 +1,41 @@
+# Git
+.git/
+.gitignore
+
+# Build outputs
+**/bin/
+**/obj/
+
+# Test projects
+tests/
+**/*.Tests/
+**/*.IntegrationTests/
+
+# Docker artifacts
+docker/volumes/
+docker/data/
+*.tar
+*.tar.gz
+
+# Secrets
+secrets/
+
+# Models (large binary files — bind mounted at runtime)
+models/
+
+# Logs
+logs/
+*.jsonl
+
+# IDE
+.vs/
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs (not needed in image)
+docs/
+*.md
