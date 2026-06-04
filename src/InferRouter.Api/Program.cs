@@ -124,6 +124,7 @@ builder.Services.AddSingleton<IReadOnlyList<ILlmProvider>>(sp =>
         {
             ProviderType.OpenAiCompatible => new OpenAiCompatibleProvider(
                 config,
+                options.HideModels,
                 secretReader,
                 httpClientFactory.CreateClient()),
             ProviderType.LocalGguf => new LlamaSharpProvider(config),

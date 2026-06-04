@@ -21,6 +21,7 @@ namespace InferRouter.Api;
 public class InferRouterOptions
 {
     public string OperationLogPath { get; init; } = "/var/log/inferrouter";
+    public bool HideModels { get; init; } = false;
     public List<ProviderConfig> Providers { get; init; } = [];
     public string RoutingStrategy { get; init; } = "ChainOfResponsibility";
 }

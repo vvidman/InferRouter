@@ -32,6 +32,7 @@ public class OpenAiCompatibleProvider : ILlmProvider
     private readonly ProviderConfig _config;
     private readonly SecretReader _secretReader;
     private readonly HttpClient _httpClient;
+    private readonly bool _hideProviderModel;
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -42,22 +43,26 @@ public class OpenAiCompatibleProvider : ILlmProvider
     public string Name => _config.Name;
     public ProviderType Type => ProviderType.OpenAiCompatible;
 
-    public OpenAiCompatibleProvider(ProviderConfig config, SecretReader secretReader, HttpClient httpClient)
+    public OpenAiCompatibleProvider(ProviderConfig config, bool hideModel, SecretReader secretReader, HttpClient httpClient)
     {
         _config = config;
         _secretReader = secretReader;
         _httpClient = httpClient;
+        _hideProviderModel = hideModel;
     }
 
     public async Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct)
     {
-        var apiKey = _secretReader.ReadApiKey(_config.Name);
-        if (apiKey is null)
-            throw new ProviderException(401, "missing_api_key", _config.ErrorMappings);
+        var apiKey = _secretReader.ReadApiKey(_config.Name) 
+            ?? throw new ProviderException(401, "missing_api_key", _config.ErrorMappings);
+
+        var modelName = (_hideProviderModel || string.IsNullOrEmpty(request.Model))
+                            ? _config.Model
+                            : request.Model;
 
         var body = new ChatCompletionRequest
         {
-            Model = (string.IsNullOrEmpty(request.Model) ? _config.Model : request.Model) ?? "",
+            Model = modelName ?? "",
             Messages = request.Messages
                 .Select(m => new ChatRequestMessage { Role = m.Role, Content = m.Content })
                 .ToList(),
