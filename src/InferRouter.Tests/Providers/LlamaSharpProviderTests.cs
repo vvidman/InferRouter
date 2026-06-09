@@ -21,6 +21,13 @@ using Xunit;
 
 namespace InferRouter.Tests.Providers;
 
+file sealed class TestableLlamaSharpProvider(ProviderConfig config, InferResult result)
+    : LlamaSharpProvider(config)
+{
+    public override Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct)
+        => Task.FromResult(result);
+}
+
 public class LlamaSharpProviderTests
 {
     private static LlamaSharpProvider MakeProvider(string modelPath = "/tmp/nonexistent-model-12345.gguf") =>
@@ -132,5 +139,55 @@ public class LlamaSharpProviderTests
         {
             File.Delete(tempFile);
         }
+    }
+
+    [Fact]
+    public async Task CompleteStreamingAsync_YieldsContentChunksAndFinalChunkWithTokenCounts()
+    {
+        const string content = "The quick brown fox jumps over the lazy dog";
+        var request = MakeRequest();
+        var inferResult = new InferResult("req-001", "local", "model.gguf", content, 10, 20, 0, false);
+        using var provider = new TestableLlamaSharpProvider(
+            new ProviderConfig { Name = "local", Type = ProviderType.LocalGguf, ModelPath = "/tmp/nonexistent.gguf" },
+            inferResult);
+
+        var chunks = new List<StreamChunk>();
+        await foreach (var chunk in provider.CompleteStreamingAsync(request, CancellationToken.None))
+            chunks.Add(chunk);
+
+        Assert.True(chunks.Count > 1, "Expected at least one content chunk plus the final chunk");
+
+        var lastChunk = chunks.Last();
+        Assert.True(lastChunk.IsLast);
+        Assert.Equal("", lastChunk.Delta);
+        Assert.Equal(10, lastChunk.PromptTokens);
+        Assert.Equal(20, lastChunk.CompletionTokens);
+
+        var contentChunks = chunks.SkipLast(1).ToList();
+        Assert.True(contentChunks.Count > 0);
+        Assert.All(contentChunks, c => Assert.False(c.IsLast));
+
+        var concatenated = string.Concat(contentChunks.Select(c => c.Delta));
+        Assert.Equal(content, concatenated);
+    }
+
+    [Fact]
+    public async Task CompleteStreamingAsync_EmptyContent_YieldsOnlyFinalChunk()
+    {
+        var request = MakeRequest();
+        var inferResult = new InferResult("req-001", "local", "model.gguf", "", 5, 0, 0, false);
+        using var provider = new TestableLlamaSharpProvider(
+            new ProviderConfig { Name = "local", Type = ProviderType.LocalGguf, ModelPath = "/tmp/nonexistent.gguf" },
+            inferResult);
+
+        var chunks = new List<StreamChunk>();
+        await foreach (var chunk in provider.CompleteStreamingAsync(request, CancellationToken.None))
+            chunks.Add(chunk);
+
+        Assert.Single(chunks);
+        Assert.True(chunks[0].IsLast);
+        Assert.Equal("", chunks[0].Delta);
+        Assert.Equal(5, chunks[0].PromptTokens);
+        Assert.Equal(0, chunks[0].CompletionTokens);
     }
 }
