@@ -14,6 +14,8 @@
    limitations under the License.
 */
 
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using InferRouter.Api.Models;
 using InferRouter.Core.Domain;
 using InferRouter.Core.Services;
@@ -31,19 +33,23 @@ public class ChatCompletionsEndpoint
         OpenAiChatRequest openAiRequest,
         ProviderOrchestrator executor,
         ILogger<ChatCompletionsEndpoint> logger,
+        HttpContext httpContext,
         CancellationToken ct)
     {
+        var request = new InferRequest(
+            RequestId: Guid.NewGuid().ToString(),
+            Messages: openAiRequest.Messages
+                .Select(m => new ChatMessage(m.Role, m.Content))
+                .ToList(),
+            Model: openAiRequest.Model,
+            MaxTokens: openAiRequest.MaxTokens,
+            Temperature: openAiRequest.Temperature);
+
+        if (openAiRequest.Stream == true)
+            return await HandleStreamingAsync(request, executor, httpContext, ct);
+
         try
         {
-            var request = new InferRequest(
-                RequestId: Guid.NewGuid().ToString(),
-                Messages: openAiRequest.Messages
-                    .Select(m => new ChatMessage(m.Role, m.Content))
-                    .ToList(),
-                Model: openAiRequest.Model,
-                MaxTokens: openAiRequest.MaxTokens,
-                Temperature: openAiRequest.Temperature);
-
             var result = await executor.ExecuteAsync(request, ct);
 
             var response = new OpenAiChatResponse(
@@ -85,4 +91,63 @@ public class ChatCompletionsEndpoint
                 statusCode: 500);
         }
     }
+
+    private static async Task<IResult> HandleStreamingAsync(
+        InferRequest request,
+        ProviderOrchestrator executor,
+        HttpContext httpContext,
+        CancellationToken ct)
+    {
+        var response = httpContext.Response;
+        response.ContentType = "text/event-stream";
+        response.Headers["Cache-Control"] = "no-cache";
+        response.Headers["X-Accel-Buffering"] = "no";
+
+        try
+        {
+            await foreach (var chunk in executor.ExecuteStreamingAsync(request, ct))
+            {
+                var chunkResponse = new SseChunkResponse(
+                    Id: "inferrouter-" + chunk.RequestId,
+                    Object: "chat.completion.chunk",
+                    Created: DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    Model: "",
+                    Choices:
+                    [
+                        new SseChunkChoice(
+                            Index: 0,
+                            Delta: new SseChunkDelta(Content: chunk.Delta),
+                            FinishReason: chunk.IsLast ? "stop" : null)
+                    ]);
+
+                await response.WriteAsync($"data: {JsonSerializer.Serialize(chunkResponse)}\n\n", ct);
+
+                if (chunk.IsLast)
+                    await response.WriteAsync("data: [DONE]\n\n", ct);
+            }
+        }
+        catch (InferRouterException)
+        {
+            await response.WriteAsync("data: [DONE]\n\n", CancellationToken.None);
+            await response.Body.FlushAsync(CancellationToken.None);
+        }
+        catch (OperationCanceledException) { }
+
+        return Results.Empty;
+    }
+
+    private record SseChunkDelta(
+        [property: JsonPropertyName("content")] string Content);
+
+    private record SseChunkChoice(
+        [property: JsonPropertyName("index")] int Index,
+        [property: JsonPropertyName("delta")] SseChunkDelta Delta,
+        [property: JsonPropertyName("finish_reason")] string? FinishReason);
+
+    private record SseChunkResponse(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("object")] string Object,
+        [property: JsonPropertyName("created")] long Created,
+        [property: JsonPropertyName("model")] string Model,
+        [property: JsonPropertyName("choices")] SseChunkChoice[] Choices);
 }
