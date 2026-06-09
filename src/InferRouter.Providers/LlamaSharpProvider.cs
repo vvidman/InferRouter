@@ -38,6 +38,7 @@ public class LlamaSharpProvider : IInferenceClient, IDisposable
     private bool _disposed;
 
     public string Name => _config.Name;
+    public string Model => string.IsNullOrEmpty(_config.Model) ? _config.Name : _config.Model;
     public ProviderType Type => ProviderType.LocalGguf;
     public bool SupportsStreaming => false;
 

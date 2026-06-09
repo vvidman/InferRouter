@@ -114,7 +114,7 @@ public class ProviderOrchestrator(
         throw new InferRouterException("All providers exhausted");
     }
 
-    private async Task<(IAsyncEnumerator<StreamChunk> Enumerator, StreamChunk FirstChunk, string ProviderName)>
+    private async Task<(IAsyncEnumerator<StreamChunk> Enumerator, StreamChunk FirstChunk, string ProviderName, string ProviderModel)>
         FindStreamingProviderAsync(InferRequest request, CancellationToken ct)
     {
         var orderedCloud = routingStrategy.GetOrderedProviders();
@@ -139,7 +139,10 @@ public class ProviderOrchestrator(
             try
             {
                 if (await enumerator.MoveNextAsync())
-                    return (enumerator, enumerator.Current, provider.Name);
+                {
+                    var providerModel = string.IsNullOrEmpty(provider.Model) ? provider.Name : provider.Model;
+                    return (enumerator, enumerator.Current, provider.Name, providerModel);
+                }
 
                 await enumerator.DisposeAsync();
                 operationLogger.LogFallback(provider.Name, nextProviderName,
@@ -191,7 +194,7 @@ public class ProviderOrchestrator(
     {
         operationLogger.LogStarted(request);
 
-        var (enumerator, firstChunk, providerName) = await FindStreamingProviderAsync(request, ct);
+        var (enumerator, firstChunk, providerName, providerModel) = await FindStreamingProviderAsync(request, ct);
 
         operationLogger.LogStreamStarted(request.RequestId, providerName);
         var sw = Stopwatch.StartNew();
@@ -203,7 +206,7 @@ public class ProviderOrchestrator(
         {
             await using (enumerator)
             {
-                yield return firstChunk;
+                yield return firstChunk with { Model = providerModel };
 
                 while (!seenLast && await enumerator.MoveNextAsync())
                 {
@@ -214,7 +217,7 @@ public class ProviderOrchestrator(
                         finalPromptTokens = chunk.PromptTokens ?? 0;
                         finalCompletionTokens = chunk.CompletionTokens ?? 0;
                     }
-                    yield return chunk;
+                    yield return chunk with { Model = providerModel };
                 }
             }
         }

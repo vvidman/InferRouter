@@ -14,6 +14,7 @@
    limitations under the License.
 */
 
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -23,6 +24,7 @@ using InferRouter.Core.Interfaces;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
 
@@ -367,5 +369,109 @@ public class ChatCompletionsEndpointTests_StreamNoNative(ChatCompletionsStreamNo
 
         var lines = body.Split('\n', StringSplitOptions.RemoveEmptyEntries);
         Assert.Equal("data: [DONE]", lines.Last());
+    }
+}
+
+// Log capture helpers
+
+public sealed class LogEntry(LogLevel level, string category, string message)
+{
+    public LogLevel Level { get; } = level;
+    public string Category { get; } = category;
+    public string Message { get; } = message;
+}
+
+public sealed class LogCapture
+{
+    private readonly ConcurrentBag<LogEntry> _entries = new();
+    public IReadOnlyCollection<LogEntry> Entries => _entries;
+
+    public void Add(LogLevel level, string category, string message) =>
+        _entries.Add(new LogEntry(level, category, message));
+
+    public bool HasWarning(string categoryContains, string messageContains) =>
+        _entries.Any(e =>
+            e.Level == LogLevel.Warning &&
+            e.Category.Contains(categoryContains, StringComparison.OrdinalIgnoreCase) &&
+            e.Message.Contains(messageContains, StringComparison.OrdinalIgnoreCase));
+}
+
+public sealed class CapturingLogger(LogCapture capture, string categoryName) : ILogger
+{
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) =>
+        capture.Add(logLevel, categoryName, formatter(state, exception));
+}
+
+public sealed class CapturingLoggerProvider(LogCapture capture) : ILoggerProvider
+{
+    public ILogger CreateLogger(string categoryName) => new CapturingLogger(capture, categoryName);
+    public void Dispose() { }
+}
+
+// Streaming exhaustion factory and test
+
+public class ChatCompletionsStreamExhaustedFactory : InferRouterWebAppFactory
+{
+    private static readonly IReadOnlyList<ErrorMapping> AuthMappings = new List<ErrorMapping>
+    {
+        new() { HttpStatus = 401, InternalCategory = InternalErrorCategory.AuthError }
+    }.AsReadOnly();
+
+    public LogCapture Capture { get; } = new();
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+
+        builder.ConfigureLogging(logging => logging.AddProvider(new CapturingLoggerProvider(Capture)));
+
+        builder.ConfigureTestServices(services =>
+        {
+            var cloud = new Mock<IInferenceClient>();
+            cloud.Setup(p => p.Name).Returns("test-provider");
+            cloud.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
+            cloud.Setup(p => p.CompleteStreamingAsync(
+                    It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+                .Returns<InferRequest, CancellationToken>((_, _) => ThrowAuth());
+
+            var local = new Mock<IInferenceClient>();
+            local.Setup(p => p.Name).Returns("test-local");
+            local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
+            local.Setup(p => p.CompleteStreamingAsync(
+                    It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+                .Returns<InferRequest, CancellationToken>((_, _) => ThrowAuth());
+
+            services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
+                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+        });
+    }
+
+    private static async IAsyncEnumerable<StreamChunk> ThrowAuth()
+    {
+        await Task.Yield();
+        throw new ProviderException(401, null, AuthMappings);
+        yield return default!;
+    }
+}
+
+public class ChatCompletionsEndpointTests_StreamExhausted(ChatCompletionsStreamExhaustedFactory factory)
+    : IClassFixture<ChatCompletionsStreamExhaustedFactory>
+{
+    private static StringContent JsonBody(string json) =>
+        new(json, Encoding.UTF8, "application/json");
+
+    [Fact]
+    public async Task StreamTrue_AllProvidersExhausted_LogsWarning()
+    {
+        var client = factory.CreateClient();
+        await client.PostAsync("/v1/chat/completions",
+            JsonBody("""{"model":"test-model","messages":[{"role":"user","content":"hi"}],"stream":true}"""));
+
+        Assert.True(
+            factory.Capture.HasWarning("ChatCompletionsEndpoint", "All providers exhausted"),
+            "Expected a Warning log from ChatCompletionsEndpoint about providers being exhausted");
     }
 }

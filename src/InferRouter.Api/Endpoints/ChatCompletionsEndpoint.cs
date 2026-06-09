@@ -46,7 +46,7 @@ public class ChatCompletionsEndpoint
             Temperature: openAiRequest.Temperature);
 
         if (openAiRequest.Stream == true)
-            return await HandleStreamingAsync(request, executor, httpContext, ct);
+            return await HandleStreamingAsync(request, executor, logger, httpContext, ct);
 
         try
         {
@@ -95,6 +95,7 @@ public class ChatCompletionsEndpoint
     private static async Task<IResult> HandleStreamingAsync(
         InferRequest request,
         ProviderOrchestrator executor,
+        ILogger<ChatCompletionsEndpoint> logger,
         HttpContext httpContext,
         CancellationToken ct)
     {
@@ -111,7 +112,7 @@ public class ChatCompletionsEndpoint
                     Id: "inferrouter-" + chunk.RequestId,
                     Object: "chat.completion.chunk",
                     Created: DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                    Model: "",
+                    Model: chunk.Model,
                     Choices:
                     [
                         new SseChunkChoice(
@@ -128,6 +129,7 @@ public class ChatCompletionsEndpoint
         }
         catch (InferRouterException)
         {
+            logger.LogWarning("All providers exhausted during streaming for request {RequestId}", request.RequestId);
             await response.WriteAsync("data: [DONE]\n\n", CancellationToken.None);
             await response.Body.FlushAsync(CancellationToken.None);
         }
