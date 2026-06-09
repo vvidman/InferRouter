@@ -14,14 +14,12 @@
    limitations under the License.
 */
 
-using System.Collections.Generic;
-using System.Text.Json.Serialization;
+namespace InferRouter.Core.Domain;
 
-namespace InferRouter.Api.Models;
-
-public record OpenAiChatRequest(
-    [property: JsonPropertyName("model")] string Model,
-    [property: JsonPropertyName("messages")] List<OpenAiMessage> Messages,
-    [property: JsonPropertyName("max_tokens")] int? MaxTokens,
-    [property: JsonPropertyName("temperature")] float? Temperature,
-    [property: JsonPropertyName("stream")] bool? Stream);
+public record StreamChunk(
+    string RequestId,
+    string Delta,
+    bool IsLast,
+    int? PromptTokens,
+    int? CompletionTokens
+);

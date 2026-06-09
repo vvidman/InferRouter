@@ -18,9 +18,11 @@ using InferRouter.Core.Domain;
 
 namespace InferRouter.Core.Interfaces;
 
-public interface ILlmProvider
+public interface IInferenceClient
 {
     string Name { get; }
     ProviderType Type { get; }
+    bool SupportsStreaming { get; }
     Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct);
+    IAsyncEnumerable<StreamChunk> CompleteStreamingAsync(InferRequest request, CancellationToken ct);
 }

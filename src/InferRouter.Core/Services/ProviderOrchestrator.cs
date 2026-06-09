@@ -21,14 +21,14 @@ using Microsoft.Extensions.Logging;
 namespace InferRouter.Core.Services;
 
 public class ProviderOrchestrator(
-    IReadOnlyList<ILlmProvider> allProviders,
+    IReadOnlyList<IInferenceClient> allProviders,
     IRoutingStrategy routingStrategy,
     IRateLimitTracker rateLimitTracker,
     ErrorNormalizer errorNormalizer,
     OperationLogger operationLogger,
     ILogger<ProviderOrchestrator> logger)
 {
-    private readonly ILlmProvider? _localFallback =
+    private readonly IInferenceClient? _localFallback =
         allProviders.FirstOrDefault(p => p.Type == ProviderType.LocalGguf);
 
     public async Task<InferResult> ExecuteAsync(InferRequest request, CancellationToken ct)
@@ -45,7 +45,7 @@ public class ProviderOrchestrator(
         operationLogger.LogProviderOrdering(request.RequestId,
             orderedCloud.Select(p => p.Name).ToList().AsReadOnly());
 
-        var toAttempt = new List<ILlmProvider>(orderedCloud);
+        var toAttempt = new List<IInferenceClient>(orderedCloud);
         if (_localFallback != null)
             toAttempt.Add(_localFallback);
 

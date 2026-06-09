@@ -20,11 +20,11 @@ using InferRouter.Core.Interfaces;
 namespace InferRouter.Core.Strategies;
 
 public class WeightedRoundRobinStrategy(
-    IReadOnlyList<ILlmProvider> cloudProviders,
+    IReadOnlyList<IInferenceClient> cloudProviders,
     IReadOnlyList<ProviderConfig> providerConfigs,
     IRateLimitTracker rateLimitTracker) : IRoutingStrategy
 {
-    public IReadOnlyList<ILlmProvider> GetOrderedProviders()
+    public IReadOnlyList<IInferenceClient> GetOrderedProviders()
     {
         var weightMap = providerConfigs.ToDictionary(
             c => c.Name,
@@ -41,7 +41,7 @@ public class WeightedRoundRobinStrategy(
         if (eligible.Count == 0)
             return [];
 
-        var result = new List<ILlmProvider>(eligible.Count);
+        var result = new List<IInferenceClient>(eligible.Count);
         var rng = Random.Shared;
 
         while (eligible.Count > 0)

@@ -36,20 +36,20 @@ public class ProviderHealthAllOkFactory : InferRouterWebAppFactory
         {
             var okResult = new InferResult("hc", "test-provider", "test-model", "ok", 0, 0, 0, false);
 
-            var cloud = new Mock<ILlmProvider>();
+            var cloud = new Mock<IInferenceClient>();
             cloud.Setup(p => p.Name).Returns("test-provider");
             cloud.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
             cloud.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(okResult);
 
-            var local = new Mock<ILlmProvider>();
+            var local = new Mock<IInferenceClient>();
             local.Setup(p => p.Name).Returns("test-local");
             local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
             local.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(okResult with { ProviderName = "test-local" });
 
-            services.AddSingleton<IReadOnlyList<ILlmProvider>>(_ =>
-                new List<ILlmProvider> { cloud.Object, local.Object }.AsReadOnly());
+            services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
+                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
         });
     }
 }
@@ -66,20 +66,20 @@ public class ProviderHealthCloudAuthErrorFactory : InferRouterWebAppFactory
                 new() { HttpStatus = 401, InternalCategory = InternalErrorCategory.AuthError }
             }.AsReadOnly();
 
-            var cloud = new Mock<ILlmProvider>();
+            var cloud = new Mock<IInferenceClient>();
             cloud.Setup(p => p.Name).Returns("test-provider");
             cloud.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
             cloud.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new ProviderException(401, null, authMappings));
 
-            var local = new Mock<ILlmProvider>();
+            var local = new Mock<IInferenceClient>();
             local.Setup(p => p.Name).Returns("test-local");
             local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
             local.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new InferResult("hc", "test-local", "local-model", "ok", 0, 0, 0, false));
 
-            services.AddSingleton<IReadOnlyList<ILlmProvider>>(_ =>
-                new List<ILlmProvider> { cloud.Object, local.Object }.AsReadOnly());
+            services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
+                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
         });
     }
 }
@@ -91,20 +91,20 @@ public class ProviderHealthAllFailFactory : InferRouterWebAppFactory
         base.ConfigureWebHost(builder);
         builder.ConfigureTestServices(services =>
         {
-            var cloud = new Mock<ILlmProvider>();
+            var cloud = new Mock<IInferenceClient>();
             cloud.Setup(p => p.Name).Returns("test-provider");
             cloud.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
             cloud.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new InvalidOperationException("provider unavailable"));
 
-            var local = new Mock<ILlmProvider>();
+            var local = new Mock<IInferenceClient>();
             local.Setup(p => p.Name).Returns("test-local");
             local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
             local.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new InvalidOperationException("provider unavailable"));
 
-            services.AddSingleton<IReadOnlyList<ILlmProvider>>(_ =>
-                new List<ILlmProvider> { cloud.Object, local.Object }.AsReadOnly());
+            services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
+                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
         });
     }
 }

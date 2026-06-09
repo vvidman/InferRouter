@@ -19,10 +19,10 @@ using InferRouter.Core.Interfaces;
 namespace InferRouter.Core.Strategies;
 
 public class ChainOfResponsibilityStrategy(
-    IReadOnlyList<ILlmProvider> cloudProviders,
+    IReadOnlyList<IInferenceClient> cloudProviders,
     IRateLimitTracker rateLimitTracker) : IRoutingStrategy
 {
-    public IReadOnlyList<ILlmProvider> GetOrderedProviders() =>
+    public IReadOnlyList<IInferenceClient> GetOrderedProviders() =>
         cloudProviders
             .Where(p => !rateLimitTracker.IsExhausted(p.Name))
             .ToList()
