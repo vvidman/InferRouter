@@ -8,7 +8,7 @@
 InferRouter/
 ├── src/
 │   ├── InferRouter.Core/            ← interfaces, domain models, zero external deps
-│   ├── InferRouter.Providers/       ← ILlmProvider implementations
+│   ├── InferRouter.Providers/       ← IInferenceClient implementations
 │   └── InferRouter.Api/             ← ASP.NET Core host, endpoints, DI composition
 ├── docker/
 │   └── docker-compose.yml
@@ -43,7 +43,7 @@ flowchart TD
     end
 
     subgraph InferRouter.Core
-        IFACE[ILlmProvider]
+        IFACE[IInferenceClient]
         STRAT[IRoutingStrategy]
         PO[ProviderOrchestrator]
         RLT[RateLimitTracker]
@@ -52,7 +52,7 @@ flowchart TD
         SR[SecretReader]
         PHC[ProviderHealthChecker]
         SS[StatsService]
-        MODELS[Domain Models\nInferRequest / InferResult\nProviderConfig / ErrorMapping\nInternalErrorCategory]
+        MODELS[Domain Models\nInferRequest / InferResult\nStreamChunk\nProviderConfig / ErrorMapping\nInternalErrorCategory]
     end
 
     subgraph InferRouter.Providers
@@ -80,18 +80,20 @@ flowchart TD
 
 ## InferRouter.Core
 
-### ILlmProvider
+### IInferenceClient
 
 ```csharp
-public interface ILlmProvider
+public interface IInferenceClient
 {
     string Name { get; }
     ProviderType Type { get; }
+    bool SupportsStreaming { get; }
     Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct);
+    IAsyncEnumerable<StreamChunk> CompleteStreamingAsync(InferRequest request, CancellationToken ct);
 }
 ```
 
-All providers — HTTP-based and local — implement this interface. `ProviderOrchestrator` is never aware of the concrete type.
+All providers — HTTP-based and local — implement this interface. `ProviderOrchestrator` is never aware of the concrete type. `SupportsStreaming` indicates whether the provider natively streams tokens; providers where it is `false` simulate streaming by splitting a completed response into chunks.
 
 ---
 
@@ -102,7 +104,7 @@ public interface IRoutingStrategy
 {
     // Returns ordered cloud providers to attempt. LocalGguf providers never included.
     // May return empty list if all cloud providers are exhausted.
-    IReadOnlyList<ILlmProvider> GetOrderedProviders();
+    IReadOnlyList<IInferenceClient> GetOrderedProviders();
 }
 ```
 
@@ -134,6 +136,15 @@ public record InferResult(
     int CompletionTokens,
     long LatencyMs,
     bool WasFallback
+);
+
+// Streaming chunk yielded during a streaming inference call
+public record StreamChunk(
+    string RequestId,
+    string Delta,           // token/content increment; empty string on the final chunk
+    bool IsLast,           // true for the final chunk only
+    int? PromptTokens,     // only present on IsLast = true
+    int? CompletionTokens  // only present on IsLast = true
 );
 
 // Error produced by a provider attempt
@@ -195,7 +206,7 @@ The central routing component. Asks `IRoutingStrategy` for the ordered cloud pro
 
 ```csharp
 public class ProviderOrchestrator(
-    IReadOnlyList<ILlmProvider> allProviders,
+    IReadOnlyList<IInferenceClient> allProviders,
     IRoutingStrategy routingStrategy,
     IRateLimitTracker rateLimitTracker,
     ErrorNormalizer errorNormalizer,
@@ -203,6 +214,7 @@ public class ProviderOrchestrator(
     ILogger<ProviderOrchestrator> logger)
 {
     public async Task<InferResult> ExecuteAsync(InferRequest request, CancellationToken ct);
+    public async IAsyncEnumerable<StreamChunk> ExecuteStreamingAsync(InferRequest request, CancellationToken ct);
 }
 ```
 
@@ -298,8 +310,12 @@ public class OperationLogger(string logDirectory)
     public void LogFailed(string requestId, string reason);
     public void LogRateLimitHit(string providerName, string requestId);
     public void LogProviderOrdering(string requestId, IReadOnlyList<string> orderedProviders);
+    public void LogStreamStarted(string requestId, string providerName);
+    public void LogStreamCompleted(string requestId, string providerName, int promptTokens, int completionTokens, long latencyMs);
 }
 ```
+
+Event types written: `infer_started`, `infer_ordering`, `infer_completed`, `infer_fallback`, `infer_failed`, `rate_limit_hit`, `stream_started`, `stream_completed`. Token counts are only available at `stream_completed` time; no per-chunk log entries are written.
 
 All methods append a single JSONL line to `{logDirectory}/operations-{yyyy-MM-dd}.jsonl`. The file is opened in append mode per write — no persistent file handle — to avoid locking issues in a single-instance deployment.
 
@@ -309,7 +325,7 @@ All methods append a single JSONL line to `{logDirectory}/operations-{yyyy-MM-dd
 
 ```csharp
 public class ProviderHealthChecker(
-    IReadOnlyList<ILlmProvider> providers,
+    IReadOnlyList<IInferenceClient> providers,
     ErrorNormalizer errorNormalizer)
 {
     // Probes every provider with a minimal 1-token request and returns a health result per provider.
@@ -326,7 +342,7 @@ Results carry `status` (`ok`, `rate_limit`, `auth_error`, `server_error`, `model
 ```csharp
 public class StatsService(
     IRateLimitTracker rateLimitTracker,
-    IReadOnlyList<ILlmProvider> providers,
+    IReadOnlyList<IInferenceClient> providers,
     string operationLogDirectory)
 {
     // Returns current rate limit stats for all providers.
@@ -362,15 +378,20 @@ public class SecretReader(ILogger<SecretReader> logger)
 public class OpenAiCompatibleProvider(
     ProviderConfig config,
     SecretReader secretReader,  // injected; ReadApiKey called fresh on every request
-    HttpClient httpClient) : ILlmProvider
+    HttpClient httpClient) : IInferenceClient
 {
     public string Name => config.Name;
     public ProviderType Type => ProviderType.OpenAiCompatible;
+    public bool SupportsStreaming => true;
 
     public async Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct);
     // calls secretReader.ReadApiKey(config.Name) at the start of each request;
     // throws ProviderException(401) if null — no API key is ever stored in a field.
     // throws ProviderException on non-2xx, carrying HttpStatus and raw error body
+
+    public async IAsyncEnumerable<StreamChunk> CompleteStreamingAsync(InferRequest request, CancellationToken ct);
+    // sends "stream": true to upstream; parses SSE data: lines and yields StreamChunk per token.
+    // data: [DONE] terminates the enumerable.
 }
 ```
 
@@ -383,13 +404,19 @@ The per-request key read means Docker Secret rotation is picked up automatically
 ### LlamaSharpProvider
 
 ```csharp
-public class LlamaSharpProvider(ProviderConfig config) : ILlmProvider
+public class LlamaSharpProvider(ProviderConfig config) : IInferenceClient
 {
     public string Name => config.Name;
     public ProviderType Type => ProviderType.LocalGguf;
+    public bool SupportsStreaming => false;
 
     // Model is loaded lazily on first call to avoid memory cost when cloud providers are healthy
     public async Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct);
+
+    public async IAsyncEnumerable<StreamChunk> CompleteStreamingAsync(InferRequest request, CancellationToken ct);
+    // calls CompleteAsync internally, then splits the completed content into word-boundary chunks
+    // and yields them. Callers receive a valid SSE stream; time-to-first-token equals
+    // the full inference latency.
 }
 ```
 
@@ -413,15 +440,15 @@ public class ChatCompletionsEndpoint
         OpenAiChatRequest openAiRequest,
         ProviderOrchestrator executor,
         ILogger<ChatCompletionsEndpoint> logger,
+        HttpContext httpContext,
         CancellationToken ct);
 }
 ```
 
 Responsibility:
 - Maps the inbound OpenAI request shape to `InferRequest`
-- Calls `ProviderOrchestrator.ExecuteAsync`
-- Maps `InferResult` back to the OpenAI response shape
-- Returns `200 OK` on success, `503` if all providers exhausted, `499` on cancellation, `500` on unexpected error
+- **Non-streaming** (`stream: false` or absent): calls `ProviderOrchestrator.ExecuteAsync`, maps `InferResult` to OpenAI JSON response. Returns `200 OK` on success, `503` if all providers exhausted, `499` on cancellation, `500` on unexpected error.
+- **Streaming** (`stream: true`): sets `Content-Type: text/event-stream`, calls `ProviderOrchestrator.ExecuteStreamingAsync`, and writes each `StreamChunk` as a `data: {...}` SSE frame. Writes `data: [DONE]` after the final chunk. On `InferRouterException`, writes `data: [DONE]` to terminate the stream gracefully.
 
 ### HealthProvidersEndpoint
 
@@ -460,7 +487,8 @@ public record OpenAiChatRequest(
     string Model,
     List<OpenAiMessage> Messages,
     int? MaxTokens,
-    float? Temperature
+    float? Temperature,
+    bool? Stream    // null and false both result in non-streaming behaviour
 );
 
 public record OpenAiChatResponse(
