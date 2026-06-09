@@ -15,7 +15,9 @@
 */
 
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using InferRouter.Core.Config;
 using InferRouter.Core.Domain;
 using InferRouter.Core.Interfaces;
@@ -44,7 +46,7 @@ public class LlamaSharpProvider : IInferenceClient, IDisposable
         _config = config;
     }
 
-    public async Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct)
+    public virtual async Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct)
     {
         if (_permanentlyFailed)
             throw new ProviderException(500, "model_permanently_failed", [],
@@ -102,8 +104,53 @@ public class LlamaSharpProvider : IInferenceClient, IDisposable
         }
     }
 
-    public IAsyncEnumerable<StreamChunk> CompleteStreamingAsync(InferRequest request, CancellationToken ct)
-        => throw new NotImplementedException();
+    public async IAsyncEnumerable<StreamChunk> CompleteStreamingAsync(
+        InferRequest request,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var result = await CompleteAsync(request, ct);
+
+        foreach (var chunk in SplitIntoChunks(result.Content, wordsPerChunk: 4))
+        {
+            ct.ThrowIfCancellationRequested();
+            yield return new StreamChunk(
+                RequestId: request.RequestId,
+                Delta: chunk,
+                IsLast: false,
+                PromptTokens: null,
+                CompletionTokens: null);
+        }
+
+        yield return new StreamChunk(
+            RequestId: request.RequestId,
+            Delta: "",
+            IsLast: true,
+            PromptTokens: result.PromptTokens,
+            CompletionTokens: result.CompletionTokens);
+    }
+
+    private static IEnumerable<string> SplitIntoChunks(string content, int wordsPerChunk)
+    {
+        if (string.IsNullOrEmpty(content))
+            yield break;
+
+        var sb = new StringBuilder();
+        var wordCount = 0;
+
+        foreach (Match match in Regex.Matches(content, @"\S+\s*"))
+        {
+            sb.Append(match.Value);
+            if (++wordCount >= wordsPerChunk)
+            {
+                yield return sb.ToString();
+                sb.Clear();
+                wordCount = 0;
+            }
+        }
+
+        if (sb.Length > 0)
+            yield return sb.ToString();
+    }
 
     private async Task EnsureLoadedAsync()
     {
