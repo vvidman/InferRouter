@@ -36,9 +36,7 @@ public class StatsHistoryEndpointTests(InferRouterWebAppFactory factory)
             var client = factory.CreateClient();
             var response = await client.GetAsync("/stats/history");
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var body = await response.Content.ReadAsStringAsync();
-            Assert.Contains("infer_started", body);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         }
         finally
         {

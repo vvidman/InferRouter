@@ -283,7 +283,9 @@ public class ChatCompletionsStreamFallbackFactory : InferRouterWebAppFactory
     {
         await Task.Yield();
         throw new ProviderException(429, null, RateMappings);
+#pragma warning disable CS0162 // Unreachable code detected
         yield return default!;
+#pragma warning restore CS0162 // Unreachable code detected
     }
 
     private static async IAsyncEnumerable<StreamChunk> FallbackChunks()
@@ -453,7 +455,9 @@ public class ChatCompletionsStreamExhaustedFactory : InferRouterWebAppFactory
     {
         await Task.Yield();
         throw new ProviderException(401, null, AuthMappings);
+#pragma warning disable CS0162 // Unreachable code detected
         yield return default!;
+#pragma warning restore CS0162 // Unreachable code detected
     }
 }
 
