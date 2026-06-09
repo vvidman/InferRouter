@@ -245,3 +245,127 @@ public class ChatCompletionsEndpointTests_Streaming(ChatCompletionsStreamFactory
         Assert.Equal(JsonValueKind.Array, root.GetProperty("choices").ValueKind);
     }
 }
+
+public class ChatCompletionsStreamFallbackFactory : InferRouterWebAppFactory
+{
+    private static readonly IReadOnlyList<ErrorMapping> RateMappings = new List<ErrorMapping>
+    {
+        new() { HttpStatus = 429, InternalCategory = InternalErrorCategory.RateLimit }
+    }.AsReadOnly();
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.ConfigureTestServices(services =>
+        {
+            var cloud = new Mock<IInferenceClient>();
+            cloud.Setup(p => p.Name).Returns("test-provider");
+            cloud.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
+            cloud.Setup(p => p.CompleteStreamingAsync(
+                    It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+                .Returns<InferRequest, CancellationToken>((_, _) => CloudThrows());
+
+            var local = new Mock<IInferenceClient>();
+            local.Setup(p => p.Name).Returns("test-local");
+            local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
+            local.Setup(p => p.CompleteStreamingAsync(
+                    It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+                .Returns<InferRequest, CancellationToken>((_, _) => FallbackChunks());
+
+            services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
+                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+        });
+    }
+
+    private static async IAsyncEnumerable<StreamChunk> CloudThrows()
+    {
+        await Task.Yield();
+        throw new ProviderException(429, null, RateMappings);
+        yield return default!;
+    }
+
+    private static async IAsyncEnumerable<StreamChunk> FallbackChunks()
+    {
+        yield return new StreamChunk("fallback-req-id", "Fallback", false, null, null);
+        await Task.Yield();
+        yield return new StreamChunk("fallback-req-id", " response", true, 5, 8);
+    }
+}
+
+public class ChatCompletionsEndpointTests_StreamFallback(ChatCompletionsStreamFallbackFactory factory)
+    : IClassFixture<ChatCompletionsStreamFallbackFactory>
+{
+    private static StringContent JsonBody(string json) =>
+        new(json, Encoding.UTF8, "application/json");
+
+    [Fact]
+    public async Task StreamTrue_CloudThrowsBeforeFirstChunk_FallsBackToLocalAndReturnsStream()
+    {
+        var client = factory.CreateClient();
+        var response = await client.PostAsync("/v1/chat/completions",
+            JsonBody("""{"model":"test-model","messages":[{"role":"user","content":"hi"}],"stream":true}"""));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("text/event-stream", response.Content.Headers.ContentType?.ToString() ?? "");
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("data: ", body);
+        Assert.Contains("data: [DONE]", body);
+    }
+}
+
+public class ChatCompletionsStreamNoNativeFactory : InferRouterWebAppFactory
+{
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.ConfigureTestServices(services =>
+        {
+            var cloud = new Mock<IInferenceClient>();
+            cloud.Setup(p => p.Name).Returns("test-provider");
+            cloud.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
+            cloud.Setup(p => p.SupportsStreaming).Returns(false);
+            cloud.Setup(p => p.CompleteStreamingAsync(
+                    It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+                .Returns<InferRequest, CancellationToken>((_, _) => SimulatedChunks());
+
+            var local = new Mock<IInferenceClient>();
+            local.Setup(p => p.Name).Returns("test-local");
+            local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
+
+            services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
+                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+        });
+    }
+
+    private static async IAsyncEnumerable<StreamChunk> SimulatedChunks()
+    {
+        yield return new StreamChunk("simulated-req-id", "Simulated", false, null, null);
+        await Task.Yield();
+        yield return new StreamChunk("simulated-req-id", " response", true, 4, 6);
+    }
+}
+
+public class ChatCompletionsEndpointTests_StreamNoNative(ChatCompletionsStreamNoNativeFactory factory)
+    : IClassFixture<ChatCompletionsStreamNoNativeFactory>
+{
+    private static StringContent JsonBody(string json) =>
+        new(json, Encoding.UTF8, "application/json");
+
+    [Fact]
+    public async Task StreamTrue_SupportsStreamingFalse_SimulatedSseWithDoneTermination()
+    {
+        var client = factory.CreateClient();
+        var response = await client.PostAsync("/v1/chat/completions",
+            JsonBody("""{"model":"test-model","messages":[{"role":"user","content":"hi"}],"stream":true}"""));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("text/event-stream", response.Content.Headers.ContentType?.ToString() ?? "");
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("data: ", body);
+
+        var lines = body.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("data: [DONE]", lines.Last());
+    }
+}
