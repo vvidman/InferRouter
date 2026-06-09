@@ -400,6 +400,28 @@ public class ProviderOrchestratorTests
         llamaMock.Verify(p => p.CompleteStreamingAsync(request, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // Streaming — no IsLast chunk
+
+    [Fact]
+    public async Task Streaming_StreamEndsWithoutIsLast_LogsInferFailed()
+    {
+        var p1 = MakeProvider("p1");
+        var request = MakeRequest();
+        var chunksWithoutLast = new List<StreamChunk>
+        {
+            new StreamChunk(request.RequestId, "Hello", false, null, null),
+            new StreamChunk(request.RequestId, " world", false, null, null)
+        };
+        p1.Setup(p => p.CompleteStreamingAsync(request, It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable(chunksWithoutLast));
+
+        var bundle = BuildOrchestrator([p1]);
+        await foreach (var _ in bundle.Orchestrator.ExecuteStreamingAsync(request, CancellationToken.None)) { }
+
+        var log = await File.ReadAllTextAsync(bundle.LogFilePath);
+        Assert.Contains("infer_failed", log);
+    }
+
     // Streaming — logging
 
     [Fact]

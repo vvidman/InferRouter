@@ -227,6 +227,10 @@ public class ProviderOrchestrator(
                 operationLogger.LogStreamCompleted(request.RequestId, providerName,
                     finalPromptTokens, finalCompletionTokens, sw.ElapsedMilliseconds);
             }
+            else
+            {
+                operationLogger.LogFailed(request.RequestId, "Stream ended without final chunk");
+            }
         }
     }
 }

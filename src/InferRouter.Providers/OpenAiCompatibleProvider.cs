@@ -143,45 +143,48 @@ public class OpenAiCompatibleProvider : IInferenceClient
             throw new ProviderException((int)response.StatusCode, errorCode, _config.ErrorMappings);
         }
 
-        using var stream = await response.Content.ReadAsStreamAsync(ct);
-        using var reader = new StreamReader(stream);
-
-        StreamChunk? pending = null;
-
-        while (await reader.ReadLineAsync(ct) is { } line)
+        var stream = await response.Content.ReadAsStreamAsync(ct);
+        await using (stream)
         {
-            if (string.IsNullOrEmpty(line)) continue;
-            if (!line.StartsWith("data:")) continue;
+            using var reader = new StreamReader(stream);
 
-            var data = line["data:".Length..].TrimStart();
+            StreamChunk? pending = null;
 
-            if (data == "[DONE]")
+            while (await reader.ReadLineAsync(ct) is { } line)
             {
+                if (string.IsNullOrEmpty(line)) continue;
+                if (!line.StartsWith("data:")) continue;
+
+                var data = line["data:".Length..].TrimStart();
+
+                if (data == "[DONE]")
+                {
+                    if (pending is not null)
+                        yield return pending with { IsLast = true };
+                    yield break;
+                }
+
+                var sseChunk = JsonSerializer.Deserialize<SseChatChunk>(data, SerializerOptions);
+                if (sseChunk is null) continue;
+
+                var delta = sseChunk.Choices.Count > 0
+                    ? sseChunk.Choices[0].Delta.Content ?? ""
+                    : "";
+
                 if (pending is not null)
-                    yield return pending with { IsLast = true };
-                yield break;
+                    yield return pending;
+
+                pending = new StreamChunk(
+                    RequestId: request.RequestId,
+                    Delta: delta,
+                    IsLast: false,
+                    PromptTokens: sseChunk.Usage?.PromptTokens,
+                    CompletionTokens: sseChunk.Usage?.CompletionTokens);
             }
 
-            var sseChunk = JsonSerializer.Deserialize<SseChatChunk>(data, SerializerOptions);
-            if (sseChunk is null) continue;
-
-            var delta = sseChunk.Choices.Count > 0
-                ? sseChunk.Choices[0].Delta.Content ?? ""
-                : "";
-
             if (pending is not null)
-                yield return pending;
-
-            pending = new StreamChunk(
-                RequestId: request.RequestId,
-                Delta: delta,
-                IsLast: false,
-                PromptTokens: sseChunk.Usage?.PromptTokens,
-                CompletionTokens: sseChunk.Usage?.CompletionTokens);
+                yield return pending with { IsLast = true };
         }
-
-        if (pending is not null)
-            yield return pending with { IsLast = true };
     }
 
     private static string? ExtractErrorCode(string body, string path)
