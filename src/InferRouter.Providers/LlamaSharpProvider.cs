@@ -26,7 +26,7 @@ using LLama.Common;
 
 namespace InferRouter.Providers;
 
-public class LlamaSharpProvider : IInferenceClient, IDisposable
+public partial class LlamaSharpProvider : IInferenceClient, IDisposable
 {
     private readonly ProviderConfig _config;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
@@ -109,6 +109,9 @@ public class LlamaSharpProvider : IInferenceClient, IDisposable
         InferRequest request,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // CompleteAsync acquires _semaphore internally. This is intentional:
+        // LlamaSharp contexts are not thread-safe, so streaming simulation
+        // serialises behind the same semaphore as direct completion calls.
         var result = await CompleteAsync(request, ct);
 
         foreach (var chunk in SplitIntoChunks(result.Content, wordsPerChunk: 4))
@@ -130,6 +133,9 @@ public class LlamaSharpProvider : IInferenceClient, IDisposable
             CompletionTokens: result.CompletionTokens);
     }
 
+    [GeneratedRegex(@"\S+\s*")]
+    private static partial Regex WordChunkPattern();
+
     private static IEnumerable<string> SplitIntoChunks(string content, int wordsPerChunk)
     {
         if (string.IsNullOrEmpty(content))
@@ -138,7 +144,7 @@ public class LlamaSharpProvider : IInferenceClient, IDisposable
         var sb = new StringBuilder();
         var wordCount = 0;
 
-        foreach (Match match in Regex.Matches(content, @"\S+\s*"))
+        foreach (Match match in WordChunkPattern().Matches(content))
         {
             sb.Append(match.Value);
             if (++wordCount >= wordsPerChunk)
