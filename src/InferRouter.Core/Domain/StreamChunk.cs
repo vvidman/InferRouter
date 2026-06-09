@@ -21,5 +21,6 @@ public record StreamChunk(
     string Delta,
     bool IsLast,
     int? PromptTokens,
-    int? CompletionTokens
+    int? CompletionTokens,
+    string Model = ""
 );

@@ -21,6 +21,7 @@ namespace InferRouter.Core.Interfaces;
 public interface IInferenceClient
 {
     string Name { get; }
+    string Model { get; }
     ProviderType Type { get; }
     bool SupportsStreaming { get; }
     Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct);

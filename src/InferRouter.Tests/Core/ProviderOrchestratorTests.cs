@@ -58,10 +58,11 @@ public class ProviderOrchestratorTests
         return new OrchestratorBundle(orchestrator, tracker, logDir);
     }
 
-    private static Mock<IInferenceClient> MakeProvider(string name)
+    private static Mock<IInferenceClient> MakeProvider(string name, string? model = null)
     {
         var mock = new Mock<IInferenceClient>();
         mock.Setup(p => p.Name).Returns(name);
+        mock.Setup(p => p.Model).Returns(model ?? "");
         mock.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
         return mock;
     }
@@ -442,5 +443,41 @@ public class ProviderOrchestratorTests
         Assert.Contains("\"p1\"", log);
         Assert.Contains("\"prompt_tokens\":10", log);
         Assert.Contains("\"completion_tokens\":20", log);
+    }
+
+    // Streaming — model name on chunks
+
+    [Fact]
+    public async Task Streaming_ChunksCarryConfiguredModelName()
+    {
+        var p1 = MakeProvider("p1", model: "llama-3-70b");
+        var request = MakeRequest();
+        var chunks = MakeChunks(request.RequestId);
+        p1.Setup(p => p.CompleteStreamingAsync(request, It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable(chunks));
+
+        var bundle = BuildOrchestrator([p1]);
+        var result = new List<StreamChunk>();
+        await foreach (var chunk in bundle.Orchestrator.ExecuteStreamingAsync(request, CancellationToken.None))
+            result.Add(chunk);
+
+        Assert.All(result, c => Assert.Equal("llama-3-70b", c.Model));
+    }
+
+    [Fact]
+    public async Task Streaming_ChunksFallBackToProviderName_WhenModelNotConfigured()
+    {
+        var p1 = MakeProvider("p1"); // model defaults to ""
+        var request = MakeRequest();
+        var chunks = MakeChunks(request.RequestId);
+        p1.Setup(p => p.CompleteStreamingAsync(request, It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable(chunks));
+
+        var bundle = BuildOrchestrator([p1]);
+        var result = new List<StreamChunk>();
+        await foreach (var chunk in bundle.Orchestrator.ExecuteStreamingAsync(request, CancellationToken.None))
+            result.Add(chunk);
+
+        Assert.All(result, c => Assert.Equal("p1", c.Model));
     }
 }

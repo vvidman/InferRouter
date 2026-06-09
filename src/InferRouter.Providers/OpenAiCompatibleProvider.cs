@@ -42,6 +42,7 @@ public class OpenAiCompatibleProvider : IInferenceClient
     };
 
     public string Name => _config.Name;
+    public string Model => string.IsNullOrEmpty(_config.Model) ? _config.Name : _config.Model;
     public ProviderType Type => ProviderType.OpenAiCompatible;
     public bool SupportsStreaming => true;
 
