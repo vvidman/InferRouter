@@ -14,6 +14,8 @@
    limitations under the License.
 */
 
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using InferRouter.Core.Domain;
 using InferRouter.Core.Interfaces;
 using Microsoft.Extensions.Logging;
@@ -110,5 +112,121 @@ public class ProviderOrchestrator(
 
         operationLogger.LogFailed(request.RequestId, "All providers exhausted");
         throw new InferRouterException("All providers exhausted");
+    }
+
+    private async Task<(IAsyncEnumerator<StreamChunk> Enumerator, StreamChunk FirstChunk, string ProviderName)>
+        FindStreamingProviderAsync(InferRequest request, CancellationToken ct)
+    {
+        var orderedCloud = routingStrategy.GetOrderedProviders();
+
+        var allCloud = allProviders.Where(p => p.Type != ProviderType.LocalGguf).ToList();
+        foreach (var skipped in allCloud.Where(p => orderedCloud.All(op => op.Name != p.Name)))
+            operationLogger.LogRateLimitHit(skipped.Name, request.RequestId);
+
+        operationLogger.LogProviderOrdering(request.RequestId,
+            orderedCloud.Select(p => p.Name).ToList().AsReadOnly());
+
+        var toAttempt = new List<IInferenceClient>(orderedCloud);
+        if (_localFallback != null)
+            toAttempt.Add(_localFallback);
+
+        for (int i = 0; i < toAttempt.Count; i++)
+        {
+            var provider = toAttempt[i];
+            var nextProviderName = i + 1 < toAttempt.Count ? toAttempt[i + 1].Name : string.Empty;
+
+            var enumerator = provider.CompleteStreamingAsync(request, ct).GetAsyncEnumerator(ct);
+            try
+            {
+                if (await enumerator.MoveNextAsync())
+                    return (enumerator, enumerator.Current, provider.Name);
+
+                await enumerator.DisposeAsync();
+                operationLogger.LogFallback(provider.Name, nextProviderName,
+                    InternalErrorCategory.UnknownError, request.RequestId);
+            }
+            catch (ProviderException ex)
+            {
+                await enumerator.DisposeAsync();
+                var category = errorNormalizer.Categorize(ex.HttpStatus, ex.RawErrorCode, ex.Mappings);
+
+                if (category == InternalErrorCategory.AuthError)
+                {
+                    logger.LogWarning(
+                        "Provider {ProviderName} returned an auth error; skipping permanently.",
+                        provider.Name);
+                    continue;
+                }
+
+                if (category == InternalErrorCategory.RateLimit)
+                    rateLimitTracker.MarkExhausted(provider.Name);
+
+                operationLogger.LogFallback(provider.Name, nextProviderName, category, request.RequestId);
+            }
+            catch (HttpRequestException ex)
+            {
+                await enumerator.DisposeAsync();
+                logger.LogWarning(ex, "Provider {ProviderName} network error; falling back.", provider.Name);
+                operationLogger.LogFallback(provider.Name, nextProviderName,
+                    InternalErrorCategory.ServerError, request.RequestId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await enumerator.DisposeAsync();
+                logger.LogWarning(ex,
+                    "Provider {ProviderName} threw an unexpected exception; falling back.",
+                    provider.Name);
+                operationLogger.LogFallback(provider.Name, nextProviderName,
+                    InternalErrorCategory.UnknownError, request.RequestId);
+            }
+        }
+
+        operationLogger.LogFailed(request.RequestId, "All providers exhausted");
+        throw new InferRouterException("All providers exhausted");
+    }
+
+    public async IAsyncEnumerable<StreamChunk> ExecuteStreamingAsync(
+        InferRequest request,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        operationLogger.LogStarted(request);
+
+        var (enumerator, firstChunk, providerName) = await FindStreamingProviderAsync(request, ct);
+
+        operationLogger.LogStreamStarted(request.RequestId, providerName);
+        var sw = Stopwatch.StartNew();
+        bool seenLast = firstChunk.IsLast;
+        int finalPromptTokens = firstChunk.PromptTokens ?? 0;
+        int finalCompletionTokens = firstChunk.CompletionTokens ?? 0;
+
+        try
+        {
+            await using (enumerator)
+            {
+                yield return firstChunk;
+
+                while (!seenLast && await enumerator.MoveNextAsync())
+                {
+                    var chunk = enumerator.Current;
+                    if (chunk.IsLast)
+                    {
+                        seenLast = true;
+                        finalPromptTokens = chunk.PromptTokens ?? 0;
+                        finalCompletionTokens = chunk.CompletionTokens ?? 0;
+                    }
+                    yield return chunk;
+                }
+            }
+        }
+        finally
+        {
+            sw.Stop();
+            if (seenLast)
+            {
+                rateLimitTracker.RecordRequest(providerName);
+                operationLogger.LogStreamCompleted(request.RequestId, providerName,
+                    finalPromptTokens, finalCompletionTokens, sw.ElapsedMilliseconds);
+            }
+        }
     }
 }

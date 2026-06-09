@@ -328,4 +328,97 @@ public class ProviderOrchestratorTests
 
         p2.Verify(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    // Streaming helpers
+
+    private static async IAsyncEnumerable<StreamChunk> ToAsyncEnumerable(IEnumerable<StreamChunk> chunks)
+    {
+        foreach (var chunk in chunks)
+            yield return chunk;
+    }
+
+    private static async IAsyncEnumerable<StreamChunk> ThrowingAsyncEnumerable(Exception ex)
+    {
+        bool willThrow = true;
+        if (willThrow) throw ex;
+        yield break;
+    }
+
+    private static List<StreamChunk> MakeChunks(string requestId) =>
+    [
+        new StreamChunk(requestId, "Hello", false, null, null),
+        new StreamChunk(requestId, " World", true, 10, 20)
+    ];
+
+    // Streaming — fallback before first chunk
+
+    [Fact]
+    public async Task Streaming_FirstProviderThrowsBeforeFirstChunk_FallsBackToNext()
+    {
+        var p1 = MakeProvider("p1");
+        var p2 = MakeProvider("p2");
+        var request = MakeRequest();
+        var chunks = MakeChunks(request.RequestId);
+
+        p1.Setup(p => p.CompleteStreamingAsync(request, It.IsAny<CancellationToken>()))
+            .Returns(ThrowingAsyncEnumerable(MakeRateLimitException()));
+        p2.Setup(p => p.CompleteStreamingAsync(request, It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable(chunks));
+
+        var bundle = BuildOrchestrator([p1, p2]);
+        var result = new List<StreamChunk>();
+        await foreach (var chunk in bundle.Orchestrator.ExecuteStreamingAsync(request, CancellationToken.None))
+            result.Add(chunk);
+
+        Assert.Equal(chunks.Count, result.Count);
+        Assert.Equal("Hello", result[0].Delta);
+        Assert.True(result[^1].IsLast);
+        p1.Verify(p => p.CompleteStreamingAsync(request, It.IsAny<CancellationToken>()), Times.Once);
+        p2.Verify(p => p.CompleteStreamingAsync(request, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // Streaming — LlamaSharp as final fallback
+
+    [Fact]
+    public async Task Streaming_LlamaSharpSelected_CompleteStreamingAsyncCalled_ChunksYielded()
+    {
+        var llamaMock = new Mock<IInferenceClient>();
+        llamaMock.Setup(p => p.Name).Returns("llama");
+        llamaMock.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
+        var request = MakeRequest();
+        var chunks = MakeChunks(request.RequestId);
+        llamaMock.Setup(p => p.CompleteStreamingAsync(request, It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable(chunks));
+
+        var bundle = BuildOrchestrator([llamaMock]);
+        var result = new List<StreamChunk>();
+        await foreach (var chunk in bundle.Orchestrator.ExecuteStreamingAsync(request, CancellationToken.None))
+            result.Add(chunk);
+
+        Assert.Equal(chunks.Count, result.Count);
+        Assert.True(result[^1].IsLast);
+        llamaMock.Verify(p => p.CompleteStreamingAsync(request, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // Streaming — logging
+
+    [Fact]
+    public async Task Streaming_LogsStreamStartedAndStreamCompleted_WithCorrectArguments()
+    {
+        var p1 = MakeProvider("p1");
+        var request = MakeRequest();
+        var chunks = MakeChunks(request.RequestId);
+        p1.Setup(p => p.CompleteStreamingAsync(request, It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable(chunks));
+
+        var bundle = BuildOrchestrator([p1]);
+        await foreach (var _ in bundle.Orchestrator.ExecuteStreamingAsync(request, CancellationToken.None)) { }
+
+        var log = await File.ReadAllTextAsync(bundle.LogFilePath);
+        Assert.Contains("stream_started", log);
+        Assert.Contains("stream_completed", log);
+        Assert.Contains("\"p1\"", log);
+        Assert.Contains("\"prompt_tokens\":10", log);
+        Assert.Contains("\"completion_tokens\":20", log);
+    }
 }

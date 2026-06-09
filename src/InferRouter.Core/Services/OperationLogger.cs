@@ -92,6 +92,28 @@ public class OperationLogger(string logDirectory)
             OrderedProviders = orderedProviders
         });
 
+    public void LogStreamStarted(string requestId, string providerName) =>
+        AppendLine(new
+        {
+            Ts = DateTimeOffset.UtcNow,
+            RequestId = requestId,
+            Event = "stream_started",
+            Provider = providerName
+        });
+
+    public void LogStreamCompleted(string requestId, string providerName,
+                                   int promptTokens, int completionTokens, long latencyMs) =>
+        AppendLine(new
+        {
+            Ts = DateTimeOffset.UtcNow,
+            RequestId = requestId,
+            Event = "stream_completed",
+            Provider = providerName,
+            PromptTokens = promptTokens,
+            CompletionTokens = completionTokens,
+            LatencyMs = latencyMs
+        });
+
     private void AppendLine<T>(T entry)
     {
         Directory.CreateDirectory(logDirectory);
