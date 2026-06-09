@@ -94,6 +94,45 @@ public class OpenAiCompatibleProviderTests
     }
 
     [Fact]
+    public async Task CompleteStreamingAsync_DoneAfterManyChunks_YieldsAllChunks()
+    {
+        const string sseBody =
+            "data: {\"id\":\"c1\",\"choices\":[{\"delta\":{\"content\":\"A\"}}],\"usage\":null}\n" +
+            "\n" +
+            "data: {\"id\":\"c2\",\"choices\":[{\"delta\":{\"content\":\"B\"}}],\"usage\":null}\n" +
+            "\n" +
+            "data: {\"id\":\"c3\",\"choices\":[{\"delta\":{\"content\":\"C\"}}],\"usage\":null}\n" +
+            "\n" +
+            "data: {\"id\":\"c4\",\"choices\":[{\"delta\":{\"content\":\"D\"}}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":4}}\n" +
+            "\n" +
+            "data: [DONE]\n";
+
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(sseBody, Encoding.UTF8, "text/event-stream")
+        };
+
+        var provider = MakeProvider(new FakeHandler(response));
+        var request = MakeRequest();
+
+        var chunks = new List<StreamChunk>();
+        await foreach (var chunk in provider.CompleteStreamingAsync(request, CancellationToken.None))
+            chunks.Add(chunk);
+
+        Assert.Equal(4, chunks.Count);
+        Assert.Equal("A", chunks[0].Delta);
+        Assert.False(chunks[0].IsLast);
+        Assert.Equal("B", chunks[1].Delta);
+        Assert.False(chunks[1].IsLast);
+        Assert.Equal("C", chunks[2].Delta);
+        Assert.False(chunks[2].IsLast);
+        Assert.Equal("D", chunks[3].Delta);
+        Assert.True(chunks[3].IsLast);
+        Assert.Equal(4, chunks[3].PromptTokens);
+        Assert.Equal(4, chunks[3].CompletionTokens);
+    }
+
+    [Fact]
     public async Task CompleteStreamingAsync_NonSuccessStatusBeforeStreaming_ThrowsProviderException()
     {
         var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
