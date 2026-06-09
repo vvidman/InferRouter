@@ -21,7 +21,7 @@ namespace InferRouter.Core.Services;
 
 public class StatsService(
     IRateLimitTracker rateLimitTracker,
-    IReadOnlyList<ILlmProvider> providers,
+    IReadOnlyList<IInferenceClient> providers,
     string operationLogDirectory)
 {
     public IReadOnlyList<ProviderRateLimitStats> GetLiveStats() =>

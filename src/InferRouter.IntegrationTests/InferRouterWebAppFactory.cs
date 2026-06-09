@@ -48,17 +48,17 @@ public class InferRouterWebAppFactory : WebApplicationFactory<Program>
             services.AddSingleton<OperationLogger>(_ =>
                 new OperationLogger(Path.Combine(Path.GetTempPath(), $"inferrouter-test-{Guid.NewGuid():N}")));
 
-            services.AddSingleton<IReadOnlyList<ILlmProvider>>(_ =>
+            services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
             {
-                var cloudProvider = new Mock<ILlmProvider>();
+                var cloudProvider = new Mock<IInferenceClient>();
                 cloudProvider.Setup(p => p.Name).Returns("test-provider");
                 cloudProvider.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
 
-                var localProvider = new Mock<ILlmProvider>();
+                var localProvider = new Mock<IInferenceClient>();
                 localProvider.Setup(p => p.Name).Returns("test-local");
                 localProvider.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
 
-                return new List<ILlmProvider>
+                return new List<IInferenceClient>
                 {
                     cloudProvider.Object,
                     localProvider.Object

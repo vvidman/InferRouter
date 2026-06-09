@@ -27,7 +27,7 @@ using System.Text.Json.Serialization;
 
 namespace InferRouter.Providers;
 
-public class OpenAiCompatibleProvider : ILlmProvider
+public class OpenAiCompatibleProvider : IInferenceClient
 {
     private readonly ProviderConfig _config;
     private readonly SecretReader _secretReader;
@@ -42,6 +42,7 @@ public class OpenAiCompatibleProvider : ILlmProvider
 
     public string Name => _config.Name;
     public ProviderType Type => ProviderType.OpenAiCompatible;
+    public bool SupportsStreaming => false;
 
     public OpenAiCompatibleProvider(ProviderConfig config, bool hideModel, SecretReader secretReader, HttpClient httpClient)
     {
@@ -102,6 +103,9 @@ public class OpenAiCompatibleProvider : ILlmProvider
             WasFallback: false
         );
     }
+
+    public IAsyncEnumerable<StreamChunk> CompleteStreamingAsync(InferRequest request, CancellationToken ct)
+        => throw new NotImplementedException();
 
     private static string? ExtractErrorCode(string body, string path)
     {

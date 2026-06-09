@@ -111,16 +111,16 @@ builder.Services.AddSingleton<OperationLogger>(_ => new OperationLogger(options.
 
 builder.Services.AddHttpClient();
 
-// Providers built in config order, registered as IReadOnlyList<ILlmProvider>
-builder.Services.AddSingleton<IReadOnlyList<ILlmProvider>>(sp =>
+// Providers built in config order, registered as IReadOnlyList<IInferenceClient>
+builder.Services.AddSingleton<IReadOnlyList<IInferenceClient>>(sp =>
 {
     var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
     var secretReader = sp.GetRequiredService<SecretReader>();
-    var providers = new List<ILlmProvider>();
+    var providers = new List<IInferenceClient>();
 
     foreach (var config in options.Providers)
     {
-        ILlmProvider provider = config.Type switch
+        IInferenceClient provider = config.Type switch
         {
             ProviderType.OpenAiCompatible => new OpenAiCompatibleProvider(
                 config,
@@ -139,7 +139,7 @@ builder.Services.AddSingleton<IReadOnlyList<ILlmProvider>>(sp =>
 
 builder.Services.AddSingleton<IRoutingStrategy>(sp =>
 {
-    var allProviders = sp.GetRequiredService<IReadOnlyList<ILlmProvider>>();
+    var allProviders = sp.GetRequiredService<IReadOnlyList<IInferenceClient>>();
     var cloudProviders = allProviders
         .Where(p => p.Type != ProviderType.LocalGguf)
         .ToList()
@@ -164,7 +164,7 @@ builder.Services.AddSingleton<ProviderHealthChecker>();
 
 builder.Services.AddSingleton(sp => new StatsService(
     sp.GetRequiredService<IRateLimitTracker>(),
-    sp.GetRequiredService<IReadOnlyList<ILlmProvider>>(),
+    sp.GetRequiredService<IReadOnlyList<IInferenceClient>>(),
     options.OperationLogPath));
 
 var app = builder.Build();

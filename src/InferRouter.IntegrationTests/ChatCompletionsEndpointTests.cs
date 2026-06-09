@@ -35,19 +35,19 @@ public class ChatCompletionsSuccessFactory : InferRouterWebAppFactory
         base.ConfigureWebHost(builder);
         builder.ConfigureTestServices(services =>
         {
-            var cloud = new Mock<ILlmProvider>();
+            var cloud = new Mock<IInferenceClient>();
             cloud.Setup(p => p.Name).Returns("test-provider");
             cloud.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
             cloud.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new InferResult("req-1", "test-provider", "test-model",
                     "Hello!", 10, 5, 50, false));
 
-            var local = new Mock<ILlmProvider>();
+            var local = new Mock<IInferenceClient>();
             local.Setup(p => p.Name).Returns("test-local");
             local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
 
-            services.AddSingleton<IReadOnlyList<ILlmProvider>>(_ =>
-                new List<ILlmProvider> { cloud.Object, local.Object }.AsReadOnly());
+            services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
+                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
         });
     }
 }
@@ -64,20 +64,20 @@ public class ChatCompletionsAllFailFactory : InferRouterWebAppFactory
                 new() { HttpStatus = 401, InternalCategory = InternalErrorCategory.AuthError }
             }.AsReadOnly();
 
-            var cloud = new Mock<ILlmProvider>();
+            var cloud = new Mock<IInferenceClient>();
             cloud.Setup(p => p.Name).Returns("test-provider");
             cloud.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
             cloud.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new ProviderException(401, null, authMappings));
 
-            var local = new Mock<ILlmProvider>();
+            var local = new Mock<IInferenceClient>();
             local.Setup(p => p.Name).Returns("test-local");
             local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
             local.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new ProviderException(401, null, authMappings));
 
-            services.AddSingleton<IReadOnlyList<ILlmProvider>>(_ =>
-                new List<ILlmProvider> { cloud.Object, local.Object }.AsReadOnly());
+            services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
+                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
         });
     }
 }
@@ -94,21 +94,21 @@ public class ChatCompletionsFallbackFactory : InferRouterWebAppFactory
                 new() { HttpStatus = 429, InternalCategory = InternalErrorCategory.RateLimit }
             }.AsReadOnly();
 
-            var cloud = new Mock<ILlmProvider>();
+            var cloud = new Mock<IInferenceClient>();
             cloud.Setup(p => p.Name).Returns("test-provider");
             cloud.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
             cloud.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new ProviderException(429, null, rateMappings));
 
-            var local = new Mock<ILlmProvider>();
+            var local = new Mock<IInferenceClient>();
             local.Setup(p => p.Name).Returns("test-local");
             local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
             local.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new InferResult("req-fb", "test-local", "local-model",
                     "Fallback response", 8, 4, 200, true));
 
-            services.AddSingleton<IReadOnlyList<ILlmProvider>>(_ =>
-                new List<ILlmProvider> { cloud.Object, local.Object }.AsReadOnly());
+            services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
+                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
         });
     }
 }

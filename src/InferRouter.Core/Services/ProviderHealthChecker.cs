@@ -21,7 +21,7 @@ using InferRouter.Core.Interfaces;
 namespace InferRouter.Core.Services;
 
 public class ProviderHealthChecker(
-    IReadOnlyList<ILlmProvider> providers,
+    IReadOnlyList<IInferenceClient> providers,
     ErrorNormalizer errorNormalizer)
 {
     private static readonly InferRequest HealthCheckRequest = new(
@@ -42,7 +42,7 @@ public class ProviderHealthChecker(
         return results;
     }
 
-    private async Task<ProviderHealthResult> CheckProviderAsync(ILlmProvider provider, CancellationToken ct)
+    private async Task<ProviderHealthResult> CheckProviderAsync(IInferenceClient provider, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try

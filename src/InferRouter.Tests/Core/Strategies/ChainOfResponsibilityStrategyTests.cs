@@ -24,9 +24,9 @@ namespace InferRouter.Tests.Core.Strategies;
 
 public class ChainOfResponsibilityStrategyTests
 {
-    private static Mock<ILlmProvider> MakeProvider(string name)
+    private static Mock<IInferenceClient> MakeProvider(string name)
     {
-        var mock = new Mock<ILlmProvider>();
+        var mock = new Mock<IInferenceClient>();
         mock.Setup(p => p.Name).Returns(name);
         mock.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
         return mock;

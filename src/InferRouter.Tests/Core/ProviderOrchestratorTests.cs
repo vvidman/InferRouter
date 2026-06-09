@@ -37,14 +37,14 @@ public class ProviderOrchestratorTests
     }
 
     private static OrchestratorBundle BuildOrchestrator(
-        IReadOnlyList<Mock<ILlmProvider>> mocks,
+        IReadOnlyList<Mock<IInferenceClient>> mocks,
         Func<string, ProviderConfig>? configFactory = null)
     {
         var providerConfigs = mocks
             .Select(m => configFactory?.Invoke(m.Object.Name) ?? new ProviderConfig { Name = m.Object.Name })
             .ToList();
         var tracker = new RateLimitTracker(providerConfigs, NullLogger<RateLimitTracker>.Instance);
-        var providers = mocks.Select(m => m.Object).ToList<ILlmProvider>().AsReadOnly();
+        var providers = mocks.Select(m => m.Object).ToList<IInferenceClient>().AsReadOnly();
         var cloudProviders = providers.Where(p => p.Type != ProviderType.LocalGguf).ToList().AsReadOnly();
         var strategy = new ChainOfResponsibilityStrategy(cloudProviders, tracker);
         var logDir = Path.Combine(Path.GetTempPath(), $"inferrouter-test-{Guid.NewGuid()}");
@@ -58,9 +58,9 @@ public class ProviderOrchestratorTests
         return new OrchestratorBundle(orchestrator, tracker, logDir);
     }
 
-    private static Mock<ILlmProvider> MakeProvider(string name)
+    private static Mock<IInferenceClient> MakeProvider(string name)
     {
-        var mock = new Mock<ILlmProvider>();
+        var mock = new Mock<IInferenceClient>();
         mock.Setup(p => p.Name).Returns(name);
         mock.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
         return mock;

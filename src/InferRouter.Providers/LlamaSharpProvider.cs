@@ -24,7 +24,7 @@ using LLama.Common;
 
 namespace InferRouter.Providers;
 
-public class LlamaSharpProvider : ILlmProvider, IDisposable
+public class LlamaSharpProvider : IInferenceClient, IDisposable
 {
     private readonly ProviderConfig _config;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
@@ -37,6 +37,7 @@ public class LlamaSharpProvider : ILlmProvider, IDisposable
 
     public string Name => _config.Name;
     public ProviderType Type => ProviderType.LocalGguf;
+    public bool SupportsStreaming => false;
 
     public LlamaSharpProvider(ProviderConfig config)
     {
@@ -100,6 +101,9 @@ public class LlamaSharpProvider : ILlmProvider, IDisposable
             _semaphore.Release();
         }
     }
+
+    public IAsyncEnumerable<StreamChunk> CompleteStreamingAsync(InferRequest request, CancellationToken ct)
+        => throw new NotImplementedException();
 
     private async Task EnsureLoadedAsync()
     {

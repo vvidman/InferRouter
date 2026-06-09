@@ -20,11 +20,11 @@ using InferRouter.Core.Interfaces;
 namespace InferRouter.Core.Strategies;
 
 public class LeastUsedStrategy(
-    IReadOnlyList<ILlmProvider> cloudProviders,
+    IReadOnlyList<IInferenceClient> cloudProviders,
     IReadOnlyList<ProviderConfig> providerConfigs,
     IRateLimitTracker rateLimitTracker) : IRoutingStrategy
 {
-    public IReadOnlyList<ILlmProvider> GetOrderedProviders()
+    public IReadOnlyList<IInferenceClient> GetOrderedProviders()
     {
         var limitMap = providerConfigs.ToDictionary(
             c => c.Name,

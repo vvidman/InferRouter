@@ -25,12 +25,12 @@ namespace InferRouter.Tests.Core;
 
 public class ProviderHealthCheckerTests
 {
-    private static ProviderHealthChecker BuildChecker(params Mock<ILlmProvider>[] mocks) =>
+    private static ProviderHealthChecker BuildChecker(params Mock<IInferenceClient>[] mocks) =>
         new(mocks.Select(m => m.Object).ToList(), new ErrorNormalizer());
 
-    private static Mock<ILlmProvider> MakeProvider(string name)
+    private static Mock<IInferenceClient> MakeProvider(string name)
     {
-        var mock = new Mock<ILlmProvider>();
+        var mock = new Mock<IInferenceClient>();
         mock.Setup(p => p.Name).Returns(name);
         mock.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
         return mock;

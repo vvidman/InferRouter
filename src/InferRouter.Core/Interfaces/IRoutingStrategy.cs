@@ -21,5 +21,5 @@ public interface IRoutingStrategy
     // Returns an ordered list of cloud providers to attempt for this request.
     // LlamaSharp (LocalGguf) providers are never included.
     // May return an empty list if all cloud providers are exhausted.
-    IReadOnlyList<ILlmProvider> GetOrderedProviders();
+    IReadOnlyList<IInferenceClient> GetOrderedProviders();
 }
