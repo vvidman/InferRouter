@@ -21,6 +21,7 @@ using InferRouter.Core.Services;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -42,7 +43,7 @@ public class OpenAiCompatibleProvider : IInferenceClient
 
     public string Name => _config.Name;
     public ProviderType Type => ProviderType.OpenAiCompatible;
-    public bool SupportsStreaming => false;
+    public bool SupportsStreaming => true;
 
     public OpenAiCompatibleProvider(ProviderConfig config, bool hideModel, SecretReader secretReader, HttpClient httpClient)
     {
@@ -104,8 +105,84 @@ public class OpenAiCompatibleProvider : IInferenceClient
         );
     }
 
-    public IAsyncEnumerable<StreamChunk> CompleteStreamingAsync(InferRequest request, CancellationToken ct)
-        => throw new NotImplementedException();
+    public async IAsyncEnumerable<StreamChunk> CompleteStreamingAsync(
+        InferRequest request,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var apiKey = _secretReader.ReadApiKey(_config.Name)
+            ?? throw new ProviderException(401, "missing_api_key", _config.ErrorMappings);
+
+        var modelName = (_hideProviderModel || string.IsNullOrEmpty(request.Model))
+                            ? _config.Model
+                            : request.Model;
+
+        var body = new ChatCompletionRequest
+        {
+            Model = modelName ?? "",
+            Messages = request.Messages
+                .Select(m => new ChatRequestMessage { Role = m.Role, Content = m.Content })
+                .ToList(),
+            MaxTokens = request.MaxTokens,
+            Temperature = request.Temperature,
+            Stream = true
+        };
+
+        var json = JsonSerializer.Serialize(body, SerializerOptions);
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{_config.BaseUrl}/chat/completions")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+        var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var responseBody = await response.Content.ReadAsStringAsync(ct);
+            var errorCode = ExtractErrorCode(responseBody, _config.ErrorCodePath);
+            throw new ProviderException((int)response.StatusCode, errorCode, _config.ErrorMappings);
+        }
+
+        using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream);
+
+        StreamChunk? pending = null;
+
+        while (await reader.ReadLineAsync(ct) is { } line)
+        {
+            if (string.IsNullOrEmpty(line)) continue;
+            if (!line.StartsWith("data:")) continue;
+
+            var data = line["data:".Length..].TrimStart();
+
+            if (data == "[DONE]")
+            {
+                if (pending is not null)
+                    yield return pending with { IsLast = true };
+                yield break;
+            }
+
+            var sseChunk = JsonSerializer.Deserialize<SseChatChunk>(data, SerializerOptions);
+            if (sseChunk is null) continue;
+
+            var delta = sseChunk.Choices.Count > 0
+                ? sseChunk.Choices[0].Delta.Content ?? ""
+                : "";
+
+            if (pending is not null)
+                yield return pending;
+
+            pending = new StreamChunk(
+                RequestId: request.RequestId,
+                Delta: delta,
+                IsLast: false,
+                PromptTokens: sseChunk.Usage?.PromptTokens,
+                CompletionTokens: sseChunk.Usage?.CompletionTokens);
+        }
+
+        if (pending is not null)
+            yield return pending with { IsLast = true };
+    }
 
     private static string? ExtractErrorCode(string body, string path)
     {
@@ -133,6 +210,7 @@ public class OpenAiCompatibleProvider : IInferenceClient
         public List<ChatRequestMessage> Messages { get; set; } = [];
         public int? MaxTokens { get; set; }
         public float? Temperature { get; set; }
+        public bool? Stream { get; set; }
     }
 
     private class ChatRequestMessage
@@ -159,6 +237,28 @@ public class OpenAiCompatibleProvider : IInferenceClient
     }
 
     private class ChatUsage
+    {
+        public int PromptTokens { get; set; }
+        public int CompletionTokens { get; set; }
+    }
+
+    private class SseChatChunk
+    {
+        public List<SseChoice> Choices { get; set; } = [];
+        public SseUsage? Usage { get; set; }
+    }
+
+    private class SseChoice
+    {
+        public SseDelta Delta { get; set; } = new();
+    }
+
+    private class SseDelta
+    {
+        public string? Content { get; set; }
+    }
+
+    private class SseUsage
     {
         public int PromptTokens { get; set; }
         public int CompletionTokens { get; set; }

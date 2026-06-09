@@ -20,7 +20,7 @@ namespace InferRouter.Core.Services;
 
 public class SecretReader(ILogger<SecretReader> logger)
 {
-    public string? ReadApiKey(string providerName)
+    public virtual string? ReadApiKey(string providerName)
     {
         var path = $"/run/secrets/{providerName}_api_key";
 
