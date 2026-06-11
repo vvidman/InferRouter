@@ -34,14 +34,14 @@ public class StartupValidatorTests
     [Fact]
     public void ValidateNoEmptyNames_AllHaveNames_ReturnsNull()
     {
-        var providers = new List<ProviderConfig> { OpenAi("groq"), LocalGguf() };
+        var providers = new List<ProviderConfig> { OpenAi("groq") };
         Assert.Null(StartupValidator.ValidateNoEmptyNames(providers));
     }
 
     [Fact]
     public void ValidateNoEmptyNames_EmptyName_ReturnsError()
     {
-        var providers = new List<ProviderConfig> { OpenAi(""), LocalGguf() };
+        var providers = new List<ProviderConfig> { OpenAi("") };
         var error = StartupValidator.ValidateNoEmptyNames(providers);
         Assert.NotNull(error);
         Assert.Contains("empty Name", error);
@@ -50,7 +50,7 @@ public class StartupValidatorTests
     [Fact]
     public void ValidateNoEmptyNames_WhitespaceName_ReturnsError()
     {
-        var providers = new List<ProviderConfig> { OpenAi("   "), LocalGguf() };
+        var providers = new List<ProviderConfig> { OpenAi("   ") };
         var error = StartupValidator.ValidateNoEmptyNames(providers);
         Assert.NotNull(error);
     }
@@ -60,8 +60,7 @@ public class StartupValidatorTests
     {
         var providers = new List<ProviderConfig>
         {
-            new() { Name = null!, Type = ProviderType.OpenAiCompatible },
-            LocalGguf()
+            new() { Name = null!, Type = ProviderType.OpenAiCompatible }
         };
         var error = StartupValidator.ValidateNoEmptyNames(providers);
         Assert.NotNull(error);
@@ -72,14 +71,14 @@ public class StartupValidatorTests
     [Fact]
     public void ValidateNoDuplicateNames_AllUnique_ReturnsNull()
     {
-        var providers = new List<ProviderConfig> { OpenAi("groq"), OpenAi("gemini"), LocalGguf() };
+        var providers = new List<ProviderConfig> { OpenAi("groq"), OpenAi("gemini") };
         Assert.Null(StartupValidator.ValidateNoDuplicateNames(providers));
     }
 
     [Fact]
     public void ValidateNoDuplicateNames_DuplicateName_ReturnsError()
     {
-        var providers = new List<ProviderConfig> { OpenAi("groq"), OpenAi("groq"), LocalGguf() };
+        var providers = new List<ProviderConfig> { OpenAi("groq"), OpenAi("groq") };
         var error = StartupValidator.ValidateNoDuplicateNames(providers);
         Assert.NotNull(error);
         Assert.Contains("groq", error);
@@ -89,7 +88,7 @@ public class StartupValidatorTests
     [Fact]
     public void ValidateNoDuplicateNames_CaseInsensitiveDuplicate_ReturnsError()
     {
-        var providers = new List<ProviderConfig> { OpenAi("Groq"), OpenAi("groq"), LocalGguf() };
+        var providers = new List<ProviderConfig> { OpenAi("Groq"), OpenAi("groq") };
         var error = StartupValidator.ValidateNoDuplicateNames(providers);
         Assert.NotNull(error);
     }
@@ -100,8 +99,7 @@ public class StartupValidatorTests
         var providers = new List<ProviderConfig>
         {
             OpenAi("groq"), OpenAi("groq"),
-            OpenAi("gemini"), OpenAi("gemini"),
-            LocalGguf()
+            OpenAi("gemini"), OpenAi("gemini")
         };
         var error = StartupValidator.ValidateNoDuplicateNames(providers);
         Assert.NotNull(error);
@@ -190,21 +188,21 @@ public class StartupValidatorTests
     [Fact]
     public void ValidateNoNegativeLimits_AllNonNegative_ReturnsEmpty()
     {
-        var providers = new List<ProviderConfig> { OpenAi("groq", 100, 10), LocalGguf() };
+        var providers = new List<ProviderConfig> { OpenAi("groq", 100, 10) };
         Assert.Empty(StartupValidator.ValidateNoNegativeLimits(providers));
     }
 
     [Fact]
     public void ValidateNoNegativeLimits_ZeroLimits_ReturnsEmpty()
     {
-        var providers = new List<ProviderConfig> { OpenAi("groq", 0, 0), LocalGguf() };
+        var providers = new List<ProviderConfig> { OpenAi("groq", 0, 0) };
         Assert.Empty(StartupValidator.ValidateNoNegativeLimits(providers));
     }
 
     [Fact]
     public void ValidateNoNegativeLimits_NegativeDailyLimit_ReturnsError()
     {
-        var providers = new List<ProviderConfig> { OpenAi("groq", -1, 10), LocalGguf() };
+        var providers = new List<ProviderConfig> { OpenAi("groq", -1, 10) };
         var errors = StartupValidator.ValidateNoNegativeLimits(providers);
         Assert.Single(errors);
         Assert.Contains("groq", errors[0]);
@@ -215,7 +213,7 @@ public class StartupValidatorTests
     [Fact]
     public void ValidateNoNegativeLimits_NegativeRpm_ReturnsError()
     {
-        var providers = new List<ProviderConfig> { OpenAi("groq", 100, -5), LocalGguf() };
+        var providers = new List<ProviderConfig> { OpenAi("groq", 100, -5) };
         var errors = StartupValidator.ValidateNoNegativeLimits(providers);
         Assert.Single(errors);
         Assert.Contains("groq", errors[0]);
@@ -226,7 +224,7 @@ public class StartupValidatorTests
     [Fact]
     public void ValidateNoNegativeLimits_BothNegative_ReturnsTwoErrors()
     {
-        var providers = new List<ProviderConfig> { OpenAi("groq", -1, -5), LocalGguf() };
+        var providers = new List<ProviderConfig> { OpenAi("groq", -1, -5) };
         var errors = StartupValidator.ValidateNoNegativeLimits(providers);
         Assert.Equal(2, errors.Count);
     }
@@ -237,8 +235,7 @@ public class StartupValidatorTests
         var providers = new List<ProviderConfig>
         {
             OpenAi("groq", -1, 10),
-            OpenAi("gemini", 100, -5),
-            LocalGguf()
+            OpenAi("gemini", 100, -5)
         };
         var errors = StartupValidator.ValidateNoNegativeLimits(providers);
         Assert.Equal(2, errors.Count);
@@ -251,7 +248,7 @@ public class StartupValidatorTests
     [Fact]
     public void WarnWeightedRoundRobin_NotWeightedRoundRobin_ReturnsNull()
     {
-        var providers = new List<ProviderConfig> { OpenAi("groq", 0, 0), LocalGguf() };
+        var providers = new List<ProviderConfig> { OpenAi("groq", 0, 0) };
         Assert.Null(StartupValidator.WarnWeightedRoundRobinAllZeroDailyLimits(providers, "ChainOfResponsibility"));
     }
 
@@ -261,8 +258,7 @@ public class StartupValidatorTests
         var providers = new List<ProviderConfig>
         {
             OpenAi("groq", 0, 10),
-            OpenAi("gemini", 0, 10),
-            LocalGguf()
+            OpenAi("gemini", 0, 10)
         };
         var warn = StartupValidator.WarnWeightedRoundRobinAllZeroDailyLimits(providers, "WeightedRoundRobin");
         Assert.NotNull(warn);
@@ -276,8 +272,7 @@ public class StartupValidatorTests
         var providers = new List<ProviderConfig>
         {
             OpenAi("groq", 0, 10),
-            OpenAi("gemini", 100, 10),
-            LocalGguf()
+            OpenAi("gemini", 100, 10)
         };
         Assert.Null(StartupValidator.WarnWeightedRoundRobinAllZeroDailyLimits(providers, "WeightedRoundRobin"));
     }
@@ -285,8 +280,8 @@ public class StartupValidatorTests
     [Fact]
     public void WarnWeightedRoundRobin_NoCloudProviders_ReturnsNull()
     {
-        // Only LocalGguf — nothing to warn about (structural error handled elsewhere)
-        var providers = new List<ProviderConfig> { LocalGguf() };
+        // Empty providers list — nothing to warn about (structural error handled elsewhere)
+        var providers = new List<ProviderConfig>();
         Assert.Null(StartupValidator.WarnWeightedRoundRobinAllZeroDailyLimits(providers, "WeightedRoundRobin"));
     }
 

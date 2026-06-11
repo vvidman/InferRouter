@@ -45,20 +45,20 @@ flowchart LR
         P1[Provider 1\nopenai_compatible]
         P2[Provider 2\nopenai_compatible]
         PN[Provider N\nopenai_compatible]
-        LS[LlamaSharp\nlocal_gguf — final fallback]
+        FF[FinalFallback\nlocal_gguf or openai_compatible]
     end
 
     A --> API
     RC --> P1
     RC --> P2
     RC --> PN
-    RC --> LS
+    RC --> FF
     P1 --> SR
     P2 --> SR
     PN --> SR
 ```
 
-**Fallback chain:** configurable ordered list of OpenAI-compatible providers, with LlamaSharp as the guaranteed final fallback. The chain is defined entirely in configuration — no code changes are required to add, remove, or reorder providers.
+**Fallback chain:** configurable ordered list of OpenAI-compatible providers, with an explicit `FinalFallback` as the guaranteed last resort. The fallback can be a LlamaSharp in-process model (`local_gguf`) or an OpenAI-compatible server such as Ollama (`openai_compatible`). The chain is defined entirely in configuration — no code changes are required to add, remove, or reorder providers.
 
 ---
 
@@ -72,7 +72,7 @@ flowchart LR
 
 - **Config-driven provider chain** — providers are defined in `appsettings.json` with type, base URL, model, fallback order, and error mappings. Any OpenAI-compatible HTTP endpoint can be added without code changes. → ADR-003
 
-- **LlamaSharp as library, not sidecar** — LlamaSharp runs in-process. It does not expose an HTTP endpoint. This avoids the overhead of a second container while keeping it behind the same `ILlmProvider` interface as all other providers. → ADR-004
+- **Flexible final fallback** — the `FinalFallback` section supports two types: `local_gguf` (LlamaSharp in-process, no network dependency) or `openai_compatible` (e.g. Ollama server). Both implement the same `IInferenceClient` interface. → ADR-004, ADR-009
 
 - **Docker Secrets for API keys** — keys are mounted at `/run/secrets/` and never appear in environment variables or config files. The `secrets/` directory is git-ignored; `secrets.example/` documents the expected layout. → ADR-005
 
@@ -90,7 +90,7 @@ InferRouter supports three routing strategies, configured via the `RoutingStrate
 
 **`LeastUsed`** — always routes to the provider with the lowest utilisation ratio (`DailyCount / DailyLimit`). Keeps quota consumption balanced across providers throughout the day. Tiebreaks randomly. Providers with `DailyRequestLimit: 0` are excluded.
 
-In all strategies, LlamaSharp (`local_gguf`) is held in reserve as a hard final fallback and is never part of strategy selection.
+In all strategies, the `FinalFallback` provider is held in reserve as a hard final fallback and is never part of strategy selection.
 
 → See [docs/routing-strategies.md](docs/routing-strategies.md) for full detail, config examples, and a strategy selection guide.
 
@@ -98,7 +98,7 @@ In all strategies, LlamaSharp (`local_gguf`) is held in reserve as a hard final 
 
 ## Provider Configuration
 
-Providers are defined as an ordered list. LlamaSharp (`local_gguf`) must be last.
+Providers are defined as an ordered list of `openai_compatible` entries. The final fallback is configured separately in the `FinalFallback` section — it can be either `local_gguf` (LlamaSharp in-process) or `openai_compatible` (e.g. an Ollama server).
 
 ```json
 {
@@ -129,13 +129,13 @@ Providers are defined as an ordered list. LlamaSharp (`local_gguf`) must be last
         { "HttpStatus": 400, "ErrorCode": "quota_exceeded", "InternalCategory": "RateLimit" },
         { "HttpStatus": 401, "InternalCategory": "AuthError" }
       ]
-    },
-    {
-      "Name": "local",
-      "Type": "local_gguf",
-      "ModelPath": "/models/model.gguf"
     }
-  ]
+  ],
+  "FinalFallback": {
+    "Name": "local-llama",
+    "Type": "local_gguf",
+    "ModelPath": "/models/model.gguf"
+  }
 }
 ```
 
@@ -311,17 +311,30 @@ The following providers have been validated against InferRouter. Their config sn
 }
 ```
 
-### LlamaSharp (local GGUF — final fallback)
+### LlamaSharp (local GGUF — FinalFallback option 1)
 
 ```json
-{
+"FinalFallback": {
   "Name": "llamasharp",
   "Type": "local_gguf",
   "ModelPath": "/models/llama.gguf"
 }
 ```
 
-Any GGUF-format model compatible with LlamaSharp can be used. No API key required.
+Any GGUF-format model compatible with LlamaSharp can be used. No API key required. The model is loaded lazily on first use.
+
+### Ollama (OpenAI-compatible server — FinalFallback option 2)
+
+```json
+"FinalFallback": {
+  "Name": "ollama",
+  "Type": "openai_compatible",
+  "BaseUrl": "http://localhost:11434/v1",
+  "Model": "llama3.2"
+}
+```
+
+Use this when you prefer managing a separate Ollama server instead of GGUF files and LlamaSharp's native dependencies. InferRouter performs a reachability check against `BaseUrl` at startup — the Ollama server must be running before InferRouter starts.
 
 ---
 

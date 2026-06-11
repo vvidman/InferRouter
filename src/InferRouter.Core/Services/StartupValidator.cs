@@ -94,7 +94,7 @@ public static class StartupValidator
         if (cloudProviders.Count > 0 && cloudProviders.All(p => p.DailyRequestLimit == 0))
             return "RoutingStrategy is WeightedRoundRobin but all cloud providers have DailyRequestLimit: 0. " +
                    "WeightedRoundRobin will return an empty provider list on every request, causing immediate " +
-                   "LlamaSharp fallback. Consider setting DailyRequestLimit or switching to a different strategy.";
+                   "FinalFallback usage. Consider setting DailyRequestLimit or switching to a different strategy.";
         return null;
     }
 

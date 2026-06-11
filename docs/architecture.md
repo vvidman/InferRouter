@@ -102,13 +102,13 @@ All providers — HTTP-based and local — implement this interface. `ProviderOr
 ```csharp
 public interface IRoutingStrategy
 {
-    // Returns ordered cloud providers to attempt. LocalGguf providers never included.
+    // Returns ordered cloud providers to attempt. FinalFallback is never included.
     // May return empty list if all cloud providers are exhausted.
     IReadOnlyList<IInferenceClient> GetOrderedProviders();
 }
 ```
 
-Three implementations: `ChainOfResponsibilityStrategy`, `WeightedRoundRobinStrategy`, `LeastUsedStrategy`. Selection is config-driven via `RoutingStrategy` in `appsettings.json`. The local fallback (`LocalGguf`) is always held in reserve by `ProviderOrchestrator` — strategies only handle cloud providers.
+Three implementations: `ChainOfResponsibilityStrategy`, `WeightedRoundRobinStrategy`, `LeastUsedStrategy`. Selection is config-driven via `RoutingStrategy` in `appsettings.json`. The `FinalFallback` provider is always held in reserve by `ProviderOrchestrator` — strategies only handle cloud providers.
 
 ---
 
@@ -202,11 +202,12 @@ public class ErrorMapping
 
 ### ProviderOrchestrator
 
-The central routing component. Asks `IRoutingStrategy` for the ordered cloud provider list, appends the local fallback, then attempts each in order. Delegates error categorization to `ErrorNormalizer`, quota tracking to `RateLimitTracker`, and all structured logging to `OperationLogger`.
+The central routing component. Asks `IRoutingStrategy` for the ordered cloud provider list, appends the explicit `FinalFallback`, then attempts each in order. Delegates error categorization to `ErrorNormalizer`, quota tracking to `RateLimitTracker`, and all structured logging to `OperationLogger`.
 
 ```csharp
 public class ProviderOrchestrator(
-    IReadOnlyList<IInferenceClient> allProviders,
+    IReadOnlyList<IInferenceClient> providers,    // cloud providers only
+    IInferenceClient finalFallback,               // explicit final fallback (local_gguf or openai_compatible)
     IRoutingStrategy routingStrategy,
     IRateLimitTracker rateLimitTracker,
     ErrorNormalizer errorNormalizer,
@@ -222,7 +223,7 @@ public class ProviderOrchestrator(
 
 ```
 orderedCloud = routingStrategy.GetOrderedProviders()
-toAttempt   = orderedCloud + [localFallback]
+toAttempt   = orderedCloud + [finalFallback]
 
 foreach provider in toAttempt:
     try:
@@ -505,16 +506,18 @@ public record OpenAiChatResponse(
 
 ## Startup Validation (Program.cs)
 
-On startup, before the host starts accepting requests, the following checks run. Steps 1–8 are fatal (non-zero exit on failure). Step 9 emits warnings only.
+On startup, before the host starts accepting requests, the following checks run. Steps 1–9 are fatal (non-zero exit on failure). Step 10 emits warnings only.
 
 1. Provider list must contain at least one entry
 2. No provider may have an empty `Name`
 3. Provider `Name` values must be unique
-4. The last provider must have `Type == LocalGguf`
-5. Exactly one `LocalGguf` entry is allowed
-6. All `OpenAiCompatible` providers must have a non-empty `BaseUrl`
-7. The `LocalGguf` provider's `ModelPath` must exist on disk (skipped in `Test` environment)
-8. `DailyRequestLimit` and `RequestsPerMinute` must be `>= 0` for all providers
-9. Warnings (non-fatal): `WeightedRoundRobin` selected but all cloud providers have `DailyRequestLimit: 0`; unrecognised `RoutingStrategy` value
+4. `FinalFallback` section must be present
+5. `FinalFallback.Type` must be `LocalGguf` or `OpenAiCompatible`
+6. `LocalGguf` is not allowed in the `Providers` array (must be in `FinalFallback` instead)
+7. All `OpenAiCompatible` providers in `Providers` must have a non-empty `BaseUrl`
+8. If `FinalFallback.Type == OpenAiCompatible`: `BaseUrl` must be non-empty and the server must be reachable at startup (5-second HTTP health check, skipped in `Test` environment)
+9. If `FinalFallback.Type == LocalGguf`: `ModelPath` must exist on disk (skipped in `Test` environment)
+10. `DailyRequestLimit` and `RequestsPerMinute` must be `>= 0` for all providers
+11. Warnings (non-fatal): `WeightedRoundRobin` selected but all cloud providers have `DailyRequestLimit: 0`; unrecognised `RoutingStrategy` value
 
 API key availability is not validated at startup. `SecretReader.ReadApiKey` is called per request inside `OpenAiCompatibleProvider.CompleteAsync`; a missing key produces a `ProviderException(401)` which `ProviderOrchestrator` treats as `AuthError` and skips to the next provider.
