@@ -164,6 +164,18 @@ public class RateLimitTrackerTests
         Assert.Single(rpmWindow);
     }
 
+    // --- Zero-limit provider (e.g. FinalFallback) ---
+
+    [Fact]
+    public void RecordRequest_ZeroLimits_IncrementsDailyCountAndNeverExhausted()
+    {
+        using var tracker = CreateTracker("finalfallback", 0, 0);
+        tracker.RecordRequest("finalfallback");
+        tracker.RecordRequest("finalfallback");
+        Assert.Equal(2, tracker.GetStats("finalfallback").DailyCount);
+        Assert.False(tracker.IsExhausted("finalfallback"));
+    }
+
     // --- Unknown provider ---
 
     [Fact]

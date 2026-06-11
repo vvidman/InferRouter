@@ -134,7 +134,7 @@ public class ProviderOrchestratorTests
         var request = MakeRequest();
         p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(MakeResult("p1"));
 
-        var bundle = BuildOrchestrator([p1], name => new ProviderConfig { Name = name, RequestsPerMinute = 1 });
+        var bundle = BuildOrchestrator([p1], configFactory: name => new ProviderConfig { Name = name, RequestsPerMinute = 1 });
         await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
 
         Assert.True(bundle.Tracker.IsExhausted("p1"));
@@ -554,5 +554,42 @@ public class ProviderOrchestratorTests
         mockStrategy.Verify(s => s.GetOrderedProviders(), Times.AtLeastOnce);
         // FinalFallback was used as the last resort after cloud failed
         fallback.Verify(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task FinalFallback_HandlesRequest_DailyCountIncremented()
+    {
+        const string fallbackName = "finalfallback";
+        var p1 = MakeProvider("p1");
+        var fallback = new Mock<IInferenceClient>();
+        fallback.Setup(p => p.Name).Returns(fallbackName);
+        fallback.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
+        var request = MakeRequest();
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(MakeRateLimitException());
+        fallback.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeResult(fallbackName));
+
+        var allConfigs = new List<ProviderConfig>
+        {
+            new() { Name = "p1" },
+            new() { Name = fallbackName, DailyRequestLimit = 0, RequestsPerMinute = 0 }
+        };
+        var tracker = new RateLimitTracker(allConfigs, NullLogger<RateLimitTracker>.Instance);
+        var cloudProviders = new List<IInferenceClient> { p1.Object }.AsReadOnly();
+        var strategy = new ChainOfResponsibilityStrategy(cloudProviders, tracker);
+        var logDir = Path.Combine(Path.GetTempPath(), $"inferrouter-test-{Guid.NewGuid()}");
+        var orchestrator = new ProviderOrchestrator(
+            cloudProviders,
+            fallback.Object,
+            strategy,
+            tracker,
+            new ErrorNormalizer(),
+            new OperationLogger(logDir),
+            NullLogger<ProviderOrchestrator>.Instance);
+
+        await orchestrator.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal(1, tracker.GetStats(fallbackName).DailyCount);
     }
 }

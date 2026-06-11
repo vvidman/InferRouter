@@ -1,0 +1,58 @@
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "InferRouter": {
+    "OperationLogPath": "/var/log/inferrouter",
+    "HideModels": true,
+    "Providers": [
+      {
+        "Name": "groq",
+        "Type": "OpenAiCompatible",
+        "BaseUrl": "https://api.groq.com/openai/v1",
+        "Model": "llama-3.3-70b-versatile",
+        "DailyRequestLimit": 14400,
+        "RequestsPerMinute": 30,
+        "ErrorMappings": [
+          { "HttpStatus": 429, "InternalCategory": "RateLimit" },
+          { "HttpStatus": 401, "InternalCategory": "AuthError" },
+          { "HttpStatus": 404, "InternalCategory": "ModelUnavailable" },
+          { "HttpStatus": 503, "InternalCategory": "ServerError" }
+        ]
+      },
+      {
+        "Name": "gemini",
+        "Type": "OpenAiCompatible",
+        "BaseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "Model": "gemini-2.5-flash",
+        "DailyRequestLimit": 1500,
+        "RequestsPerMinute": 10,
+        "ErrorMappings": [
+          { "HttpStatus": 429, "InternalCategory": "RateLimit" },
+          { "HttpStatus": 400, "ErrorCode": "RESOURCE_EXHAUSTED", "InternalCategory": "RateLimit" },
+          { "HttpStatus": 401, "InternalCategory": "AuthError" },
+          { "HttpStatus": 404, "InternalCategory": "ModelUnavailable" },
+          { "HttpStatus": 503, "InternalCategory": "ServerError" }
+        ]
+      }
+    ],
+
+    // Option 1: LlamaSharp in-process (default — no network dependency, model file required)
+    "FinalFallback": {
+      "Name": "llamasharp",
+      "Type": "LocalGguf",
+      "ModelPath": "/models/qwen2.5-coder-7b-instruct-q4_k_m.gguf"
+    }
+
+    // Option 2: Ollama server (OpenAI-compatible, requires Ollama running separately)
+    // "FinalFallback": {
+    //   "Name": "ollama",
+    //   "Type": "OpenAiCompatible",
+    //   "BaseUrl": "http://ollama:11434",
+    //   "Model": "qwen2.5-coder:7b"
+    // }
+  }
+}

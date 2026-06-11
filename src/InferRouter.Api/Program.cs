@@ -139,9 +139,16 @@ builder.Services.AddSingleton<SecretReader>();
 builder.Services.AddSingleton<ErrorNormalizer>();
 
 builder.Services.AddSingleton<IRateLimitTracker>(sp =>
-    new RateLimitTracker(
-        options.Providers.AsReadOnly(),
-        sp.GetRequiredService<ILogger<RateLimitTracker>>()));
+{
+    var allConfigs = options.Providers
+        .Append(options.FinalFallback!)
+        .ToList()
+        .AsReadOnly();
+
+    return new RateLimitTracker(
+        allConfigs,
+        sp.GetRequiredService<ILogger<RateLimitTracker>>());
+});
 
 builder.Services.AddSingleton<OperationLogger>(_ => new OperationLogger(options.OperationLogPath));
 

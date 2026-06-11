@@ -42,8 +42,8 @@ public class StartupValidationIntegrationTests
                         ["InferRouter:Providers:0:BaseUrl"] = "https://example.com/v1",
                         ["InferRouter:FinalFallback:Name"] = "local-compat",
                         ["InferRouter:FinalFallback:Type"] = "OpenAiCompatible",
-                        // Port 1 is reserved and always unreachable
-                        ["InferRouter:FinalFallback:BaseUrl"] = "http://localhost:1"
+                        // 192.0.2.0/24 is TEST-NET-1 (RFC 5737) — reserved, never routable
+                        ["InferRouter:FinalFallback:BaseUrl"] = "http://192.0.2.1"
                     });
                 });
             });
