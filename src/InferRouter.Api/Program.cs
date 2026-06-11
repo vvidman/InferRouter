@@ -50,18 +50,22 @@ if (duplicateNamesError != null)
     return 1;
 }
 
-// Startup validation 4: last provider must be LocalGguf (local fallback)
-if (options.Providers[^1].Type != ProviderType.LocalGguf)
+// Startup validation 4: FinalFallback must be configured and must be LocalGguf
+if (options.FinalFallback == null)
 {
-    Console.Error.WriteLine("FATAL: The last entry in InferRouter.Providers must have Type == LocalGguf.");
+    Console.Error.WriteLine("FATAL: InferRouter.FinalFallback is not configured. A LocalGguf final fallback must be provided.");
+    return 1;
+}
+if (options.FinalFallback.Type != ProviderType.LocalGguf)
+{
+    Console.Error.WriteLine("FATAL: InferRouter.FinalFallback must have Type == LocalGguf.");
     return 1;
 }
 
-// Startup validation 5: exactly one LocalGguf entry is allowed
-var multipleGgufError = StartupValidator.ValidateNoMultipleLocalGguf(options.Providers);
-if (multipleGgufError != null)
+// Startup validation 5: Providers must not contain any LocalGguf entries (use FinalFallback instead)
+if (options.Providers.Any(p => p.Type == ProviderType.LocalGguf))
 {
-    Console.Error.WriteLine($"FATAL: {multipleGgufError}");
+    Console.Error.WriteLine("FATAL: LocalGguf must be configured via InferRouter.FinalFallback, not within InferRouter.Providers.");
     return 1;
 }
 
@@ -79,11 +83,10 @@ if (missingBaseUrl.Count > 0)
 }
 
 // Startup validation 7: LocalGguf ModelPath must exist on disk (skipped in Test environment)
-var ggufConfig = options.Providers.First(p => p.Type == ProviderType.LocalGguf);
-if (!builder.Environment.IsEnvironment("Test") && !File.Exists(ggufConfig.ModelPath))
+if (!builder.Environment.IsEnvironment("Test") && !File.Exists(options.FinalFallback.ModelPath))
 {
     Console.Error.WriteLine(
-        $"FATAL: LocalGguf model not found at '{ggufConfig.ModelPath}'. Ensure the model file exists and ModelPath is correct.");
+        $"FATAL: LocalGguf model not found at '{options.FinalFallback.ModelPath}'. Ensure the model file exists and ModelPath is correct.");
     return 1;
 }
 
@@ -127,12 +130,13 @@ builder.Services.AddSingleton<IReadOnlyList<IInferenceClient>>(sp =>
                 options.HideModels,
                 secretReader,
                 httpClientFactory.CreateClient()),
-            ProviderType.LocalGguf => new LlamaSharpProvider(config),
             _ => throw new InvalidOperationException($"Unknown provider type: {config.Type}")
         };
 
         providers.Add(provider);
     }
+
+    providers.Add(new LlamaSharpProvider(options.FinalFallback!));
 
     return providers.AsReadOnly();
 });

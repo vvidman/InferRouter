@@ -24,4 +24,5 @@ public class InferRouterOptions
     public bool HideModels { get; init; } = false;
     public List<ProviderConfig> Providers { get; init; } = [];
     public string RoutingStrategy { get; init; } = "ChainOfResponsibility";
+    public ProviderConfig? FinalFallback { get; init; }
 }
