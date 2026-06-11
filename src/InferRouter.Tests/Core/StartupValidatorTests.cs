@@ -109,30 +109,80 @@ public class StartupValidatorTests
         Assert.Contains("gemini", error);
     }
 
-    // --- ValidateNoMultipleLocalGguf ---
+    // --- ValidateFinalFallbackPresent ---
 
     [Fact]
-    public void ValidateNoMultipleLocalGguf_SingleLocalGguf_ReturnsNull()
+    public void ValidateFinalFallbackPresent_NullFallback_ReturnsError()
     {
-        var providers = new List<ProviderConfig> { OpenAi("groq"), LocalGguf() };
-        Assert.Null(StartupValidator.ValidateNoMultipleLocalGguf(providers));
-    }
-
-    [Fact]
-    public void ValidateNoMultipleLocalGguf_TwoLocalGguf_ReturnsError()
-    {
-        var providers = new List<ProviderConfig> { OpenAi("groq"), LocalGguf("gguf1"), LocalGguf("gguf2") };
-        var error = StartupValidator.ValidateNoMultipleLocalGguf(providers);
+        var error = StartupValidator.ValidateFinalFallbackPresent(null);
         Assert.NotNull(error);
-        Assert.Contains("Multiple LocalGguf", error);
+        Assert.Contains("FinalFallback", error);
+        Assert.Contains("required", error);
     }
 
     [Fact]
-    public void ValidateNoMultipleLocalGguf_NoLocalGguf_ReturnsNull()
+    public void ValidateFinalFallbackPresent_LocalGgufFallback_ReturnsNull()
     {
-        // Structural check for last-is-LocalGguf is handled separately; this check only guards against >1
-        var providers = new List<ProviderConfig> { OpenAi("groq") };
-        Assert.Null(StartupValidator.ValidateNoMultipleLocalGguf(providers));
+        var fallback = new ProviderConfig { Name = "local", Type = ProviderType.LocalGguf };
+        Assert.Null(StartupValidator.ValidateFinalFallbackPresent(fallback));
+    }
+
+    [Fact]
+    public void ValidateFinalFallbackPresent_OpenAiCompatibleFallback_ReturnsNull()
+    {
+        var fallback = new ProviderConfig { Name = "ollama", Type = ProviderType.OpenAiCompatible, BaseUrl = "http://localhost:11434" };
+        Assert.Null(StartupValidator.ValidateFinalFallbackPresent(fallback));
+    }
+
+    // --- ValidateNoLocalGgufInProviders ---
+
+    [Fact]
+    public void ValidateNoLocalGgufInProviders_NoLocalGguf_ReturnsNull()
+    {
+        var providers = new List<ProviderConfig> { OpenAi("groq"), OpenAi("gemini") };
+        Assert.Null(StartupValidator.ValidateNoLocalGgufInProviders(providers));
+    }
+
+    [Fact]
+    public void ValidateNoLocalGgufInProviders_HasLocalGguf_ReturnsError()
+    {
+        var providers = new List<ProviderConfig> { OpenAi("groq"), LocalGguf("local") };
+        var error = StartupValidator.ValidateNoLocalGgufInProviders(providers);
+        Assert.NotNull(error);
+        Assert.Contains("LocalGguf", error);
+        Assert.Contains("FinalFallback", error);
+    }
+
+    [Fact]
+    public void ValidateNoLocalGgufInProviders_EmptyList_ReturnsNull()
+    {
+        Assert.Null(StartupValidator.ValidateNoLocalGgufInProviders(new List<ProviderConfig>()));
+    }
+
+    // --- ValidateFinalFallbackBaseUrl ---
+
+    [Fact]
+    public void ValidateFinalFallbackBaseUrl_OpenAiCompatibleMissingBaseUrl_ReturnsError()
+    {
+        var fallback = new ProviderConfig { Name = "ollama", Type = ProviderType.OpenAiCompatible };
+        var error = StartupValidator.ValidateFinalFallbackBaseUrl(fallback);
+        Assert.NotNull(error);
+        Assert.Contains("BaseUrl", error);
+        Assert.Contains("ollama", error);
+    }
+
+    [Fact]
+    public void ValidateFinalFallbackBaseUrl_OpenAiCompatibleWithBaseUrl_ReturnsNull()
+    {
+        var fallback = new ProviderConfig { Name = "ollama", Type = ProviderType.OpenAiCompatible, BaseUrl = "http://localhost:11434" };
+        Assert.Null(StartupValidator.ValidateFinalFallbackBaseUrl(fallback));
+    }
+
+    [Fact]
+    public void ValidateFinalFallbackBaseUrl_LocalGgufType_ReturnsNull()
+    {
+        var fallback = new ProviderConfig { Name = "local", Type = ProviderType.LocalGguf };
+        Assert.Null(StartupValidator.ValidateFinalFallbackBaseUrl(fallback));
     }
 
     // --- ValidateNoNegativeLimits ---

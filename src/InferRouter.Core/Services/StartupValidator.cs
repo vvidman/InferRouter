@@ -48,10 +48,24 @@ public static class StartupValidator
         return null;
     }
 
-    public static string? ValidateNoMultipleLocalGguf(IReadOnlyList<ProviderConfig> providers)
+    public static string? ValidateFinalFallbackPresent(ProviderConfig? finalFallback)
     {
-        if (providers.Count(p => p.Type == ProviderType.LocalGguf) > 1)
-            return "Multiple LocalGguf providers configured. Exactly one LocalGguf entry is required and must be last.";
+        if (finalFallback is null)
+            return "InferRouter.FinalFallback is required but not configured.";
+        return null;
+    }
+
+    public static string? ValidateNoLocalGgufInProviders(IReadOnlyList<ProviderConfig> providers)
+    {
+        if (providers.Any(p => p.Type == ProviderType.LocalGguf))
+            return "LocalGguf type is not allowed in the Providers array. Use FinalFallback instead.";
+        return null;
+    }
+
+    public static string? ValidateFinalFallbackBaseUrl(ProviderConfig finalFallback)
+    {
+        if (finalFallback.Type == ProviderType.OpenAiCompatible && string.IsNullOrEmpty(finalFallback.BaseUrl))
+            return $"FinalFallback '{finalFallback.Name}' of type OpenAiCompatible requires a non-empty BaseUrl.";
         return null;
     }
 
