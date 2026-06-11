@@ -49,7 +49,8 @@ public class ProviderHealthAllOkFactory : InferRouterWebAppFactory
                 .ReturnsAsync(okResult with { ProviderName = "test-local" });
 
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
-                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+                new List<IInferenceClient> { cloud.Object }.AsReadOnly());
+            services.AddSingleton<IInferenceClient>(_ => local.Object);
         });
     }
 }
@@ -79,7 +80,8 @@ public class ProviderHealthCloudAuthErrorFactory : InferRouterWebAppFactory
                 .ReturnsAsync(new InferResult("hc", "test-local", "local-model", "ok", 0, 0, 0, false));
 
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
-                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+                new List<IInferenceClient> { cloud.Object }.AsReadOnly());
+            services.AddSingleton<IInferenceClient>(_ => local.Object);
         });
     }
 }
@@ -97,14 +99,8 @@ public class ProviderHealthAllFailFactory : InferRouterWebAppFactory
             cloud.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new InvalidOperationException("provider unavailable"));
 
-            var local = new Mock<IInferenceClient>();
-            local.Setup(p => p.Name).Returns("test-local");
-            local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
-            local.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
-                .ThrowsAsync(new InvalidOperationException("provider unavailable"));
-
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
-                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+                new List<IInferenceClient> { cloud.Object }.AsReadOnly());
         });
     }
 }
@@ -121,7 +117,7 @@ public class ProviderHealthEndpointTests(ProviderHealthAllOkFactory factory)
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var providers = doc.RootElement.GetProperty("providers").EnumerateArray().ToList();
-        Assert.Equal(2, providers.Count);
+        Assert.Equal(1, providers.Count);
         Assert.All(providers, p =>
             Assert.Equal("ok", p.GetProperty("status").GetString()));
     }
@@ -143,7 +139,6 @@ public class ProviderHealthEndpointTests_CloudAuthError(ProviderHealthCloudAuthE
 
         Assert.Equal("auth_error", providers["test-provider"].GetProperty("status").GetString());
         Assert.Equal(401, providers["test-provider"].GetProperty("http_status").GetInt32());
-        Assert.Equal("ok", providers["test-local"].GetProperty("status").GetString());
     }
 }
 
@@ -159,7 +154,7 @@ public class ProviderHealthEndpointTests_AllFail(ProviderHealthAllFailFactory fa
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var providers = doc.RootElement.GetProperty("providers").EnumerateArray().ToList();
-        Assert.Equal(2, providers.Count);
+        Assert.Equal(1, providers.Count);
         Assert.All(providers, p =>
             Assert.NotEqual("ok", p.GetProperty("status").GetString()));
     }

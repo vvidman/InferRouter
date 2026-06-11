@@ -147,7 +147,7 @@ builder.Services.AddSingleton<OperationLogger>(_ => new OperationLogger(options.
 
 builder.Services.AddHttpClient();
 
-// Providers built in config order, registered as IReadOnlyList<IInferenceClient>
+// Cloud providers built in config order, registered as IReadOnlyList<IInferenceClient>
 builder.Services.AddSingleton<IReadOnlyList<IInferenceClient>>(sp =>
 {
     var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
@@ -169,32 +169,31 @@ builder.Services.AddSingleton<IReadOnlyList<IInferenceClient>>(sp =>
         providers.Add(provider);
     }
 
-    IInferenceClient finalFallbackProvider = options.FinalFallback!.Type switch
+    return providers.AsReadOnly();
+});
+
+// Final fallback provider — built from FinalFallback config, registered separately
+builder.Services.AddSingleton<IInferenceClient>(sp =>
+{
+    var config = options.FinalFallback!;
+    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var secretReader = sp.GetRequiredService<SecretReader>();
+    return config.Type switch
     {
-        ProviderType.LocalGguf => new LlamaSharpProvider(options.FinalFallback),
+        ProviderType.LocalGguf => new LlamaSharpProvider(config),
         ProviderType.OpenAiCompatible => new OpenAiCompatibleProvider(
-            options.FinalFallback,
+            config,
             options.HideModels,
             secretReader,
             httpClientFactory.CreateClient()),
-        _ => throw new InvalidOperationException($"Unknown FinalFallback type: {options.FinalFallback.Type}")
+        _ => throw new InvalidOperationException($"Unsupported FinalFallback type: {config.Type}")
     };
-    providers.Add(finalFallbackProvider);
-
-    return providers.AsReadOnly();
 });
 
 builder.Services.AddSingleton<IRoutingStrategy>(sp =>
 {
-    var allProviders = sp.GetRequiredService<IReadOnlyList<IInferenceClient>>();
-    var cloudProviders = allProviders
-        .Where(p => p.Type != ProviderType.LocalGguf)
-        .ToList()
-        .AsReadOnly();
-    var cloudConfigs = options.Providers
-        .Where(p => p.Type != ProviderType.LocalGguf)
-        .ToList()
-        .AsReadOnly();
+    var cloudProviders = sp.GetRequiredService<IReadOnlyList<IInferenceClient>>();
+    var cloudConfigs = options.Providers.AsReadOnly();
     var tracker = sp.GetRequiredService<IRateLimitTracker>();
     var strategyName = options.RoutingStrategy;
 
