@@ -32,9 +32,10 @@ public class StatsLiveEndpointTests(InferRouterWebAppFactory factory)
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var providers = doc.RootElement.GetProperty("providers").EnumerateArray().ToList();
-        Assert.Equal(1, providers.Count);
+        Assert.Equal(2, providers.Count);
         var names = providers.Select(p => p.GetProperty("provider_name").GetString()).ToHashSet();
         Assert.Contains("test-provider", names);
+        Assert.Contains("test-local", names);
     }
 
     [Fact]

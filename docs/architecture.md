@@ -344,6 +344,7 @@ Results carry `status` (`ok`, `rate_limit`, `auth_error`, `server_error`, `model
 public class StatsService(
     IRateLimitTracker rateLimitTracker,
     IReadOnlyList<IInferenceClient> providers,
+    IInferenceClient finalFallback,
     string operationLogDirectory)
 {
     // Returns current rate limit stats for all providers.

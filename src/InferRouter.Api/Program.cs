@@ -218,6 +218,7 @@ builder.Services.AddSingleton<ProviderHealthChecker>();
 builder.Services.AddSingleton(sp => new StatsService(
     sp.GetRequiredService<IRateLimitTracker>(),
     sp.GetRequiredService<IReadOnlyList<IInferenceClient>>(),
+    sp.GetRequiredService<IInferenceClient>(),
     options.OperationLogPath));
 
 var app = builder.Build();

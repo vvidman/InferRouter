@@ -117,7 +117,7 @@ public class ProviderHealthEndpointTests(ProviderHealthAllOkFactory factory)
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var providers = doc.RootElement.GetProperty("providers").EnumerateArray().ToList();
-        Assert.Equal(1, providers.Count);
+        Assert.Single(providers);
         Assert.All(providers, p =>
             Assert.Equal("ok", p.GetProperty("status").GetString()));
     }
@@ -154,7 +154,7 @@ public class ProviderHealthEndpointTests_AllFail(ProviderHealthAllFailFactory fa
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var providers = doc.RootElement.GetProperty("providers").EnumerateArray().ToList();
-        Assert.Equal(1, providers.Count);
+        Assert.Single(providers);
         Assert.All(providers, p =>
             Assert.NotEqual("ok", p.GetProperty("status").GetString()));
     }

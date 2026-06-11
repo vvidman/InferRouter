@@ -22,10 +22,15 @@ namespace InferRouter.Core.Services;
 public class StatsService(
     IRateLimitTracker rateLimitTracker,
     IReadOnlyList<IInferenceClient> providers,
+    IInferenceClient finalFallback,
     string operationLogDirectory)
 {
     public IReadOnlyList<ProviderRateLimitStats> GetLiveStats() =>
-        providers.Select(p => rateLimitTracker.GetStats(p.Name)).ToList().AsReadOnly();
+        providers
+            .Append(finalFallback)
+            .Select(p => rateLimitTracker.GetStats(p.Name))
+            .ToList()
+            .AsReadOnly();
 
     public (bool found, string? content) GetHistoryForDate(DateOnly date)
     {
