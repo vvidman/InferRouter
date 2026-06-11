@@ -50,22 +50,63 @@ if (duplicateNamesError != null)
     return 1;
 }
 
-// Startup validation 4: FinalFallback must be configured and must be LocalGguf
-if (options.FinalFallback == null)
+// Startup validation A: FinalFallback must be present
+var finalFallbackPresentError = StartupValidator.ValidateFinalFallbackPresent(options.FinalFallback);
+if (finalFallbackPresentError != null)
 {
-    Console.Error.WriteLine("FATAL: InferRouter.FinalFallback is not configured. A LocalGguf final fallback must be provided.");
-    return 1;
-}
-if (options.FinalFallback.Type != ProviderType.LocalGguf)
-{
-    Console.Error.WriteLine("FATAL: InferRouter.FinalFallback must have Type == LocalGguf.");
+    Console.Error.WriteLine($"FATAL: {finalFallbackPresentError}");
     return 1;
 }
 
-// Startup validation 5: Providers must not contain any LocalGguf entries (use FinalFallback instead)
-if (options.Providers.Any(p => p.Type == ProviderType.LocalGguf))
+// Startup validation B: FinalFallback.Type must be LocalGguf or OpenAiCompatible
+if (options.FinalFallback!.Type != ProviderType.LocalGguf &&
+    options.FinalFallback.Type != ProviderType.OpenAiCompatible)
 {
-    Console.Error.WriteLine("FATAL: LocalGguf must be configured via InferRouter.FinalFallback, not within InferRouter.Providers.");
+    Console.Error.WriteLine($"FATAL: FinalFallback.Type must be local_gguf or openai_compatible.");
+    return 1;
+}
+
+// Startup validation B+: FinalFallback.BaseUrl required for OpenAiCompatible
+var finalFallbackBaseUrlError = StartupValidator.ValidateFinalFallbackBaseUrl(options.FinalFallback);
+if (finalFallbackBaseUrlError != null)
+{
+    Console.Error.WriteLine($"FATAL: {finalFallbackBaseUrlError}");
+    return 1;
+}
+
+// Startup validation C: LocalGguf ModelPath must exist on disk (skipped in Test environment)
+if (options.FinalFallback.Type == ProviderType.LocalGguf &&
+    !builder.Environment.IsEnvironment("Test") &&
+    !File.Exists(options.FinalFallback.ModelPath))
+{
+    Console.Error.WriteLine(
+        $"FATAL: LocalGguf model not found at '{options.FinalFallback.ModelPath}'.");
+    return 1;
+}
+
+// Startup validation D: OpenAiCompatible FinalFallback HTTP health check (skipped in Test environment)
+if (options.FinalFallback.Type == ProviderType.OpenAiCompatible &&
+    !builder.Environment.IsEnvironment("Test"))
+{
+    using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+    try
+    {
+        await httpClient.GetAsync(options.FinalFallback.BaseUrl);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine(
+            $"FATAL: FinalFallback '{options.FinalFallback.Name}' is unreachable at " +
+            $"'{options.FinalFallback.BaseUrl}': {ex.Message}");
+        return 1;
+    }
+}
+
+// Startup validation E: LocalGguf type is not allowed in the Providers array
+var ggufInProvidersError = StartupValidator.ValidateNoLocalGgufInProviders(options.Providers);
+if (ggufInProvidersError != null)
+{
+    Console.Error.WriteLine($"FATAL: {ggufInProvidersError}");
     return 1;
 }
 
@@ -79,14 +120,6 @@ if (missingBaseUrl.Count > 0)
 {
     Console.Error.WriteLine(
         $"FATAL: OpenAiCompatible providers missing BaseUrl: {string.Join(", ", missingBaseUrl)}.");
-    return 1;
-}
-
-// Startup validation 7: LocalGguf ModelPath must exist on disk (skipped in Test environment)
-if (!builder.Environment.IsEnvironment("Test") && !File.Exists(options.FinalFallback.ModelPath))
-{
-    Console.Error.WriteLine(
-        $"FATAL: LocalGguf model not found at '{options.FinalFallback.ModelPath}'. Ensure the model file exists and ModelPath is correct.");
     return 1;
 }
 
@@ -136,7 +169,17 @@ builder.Services.AddSingleton<IReadOnlyList<IInferenceClient>>(sp =>
         providers.Add(provider);
     }
 
-    providers.Add(new LlamaSharpProvider(options.FinalFallback!));
+    IInferenceClient finalFallbackProvider = options.FinalFallback!.Type switch
+    {
+        ProviderType.LocalGguf => new LlamaSharpProvider(options.FinalFallback),
+        ProviderType.OpenAiCompatible => new OpenAiCompatibleProvider(
+            options.FinalFallback,
+            options.HideModels,
+            secretReader,
+            httpClientFactory.CreateClient()),
+        _ => throw new InvalidOperationException($"Unknown FinalFallback type: {options.FinalFallback.Type}")
+    };
+    providers.Add(finalFallbackProvider);
 
     return providers.AsReadOnly();
 });
