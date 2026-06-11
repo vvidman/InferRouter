@@ -1,7 +1,8 @@
 # ADR-003 — Config-Driven Provider Chain
 
 **Status:** Accepted  
-**Date:** 2026-05-25
+**Date:** 2026-05-25  
+**Updated:** 2026-06-11 (ADR-009 — separate `FinalFallback` section)
 
 ---
 
@@ -17,6 +18,8 @@ Additionally, different deployments may want different chains — one with Groq 
 
 The provider chain is defined entirely in `appsettings.json`. No provider name, URL, model, or fallback order is hardcoded. The application reads the `Providers` array at startup, constructs the chain in the order defined, and uses it for all routing decisions.
 
+The final fallback is configured separately in the `FinalFallback` section (see ADR-009). It is not part of the `Providers` array.
+
 **Configuration structure:**
 
 ```json
@@ -26,38 +29,46 @@ The provider chain is defined entirely in `appsettings.json`. No provider name, 
   "Providers": [
     {
       "Name": "string — used in logs and error messages",
-      "Type": "OpenAiCompatible | LocalGguf",
-      "BaseUrl": "required for OpenAiCompatible, omitted for LocalGguf",
+      "Type": "openai_compatible",
+      "BaseUrl": "required for openai_compatible",
       "Model": "model identifier string",
-      "ModelPath": "path to .gguf file — required for LocalGguf, omitted for OpenAiCompatible",
       "DailyRequestLimit": 0,
       "RequestsPerMinute": 0,
       "ErrorCodePath": "error.code",
       "ErrorMappings": []
     }
-  ]
+  ],
+  "FinalFallback": {
+    "Name": "string",
+    "Type": "local_gguf | openai_compatible",
+    "ModelPath": "path to .gguf file — required for local_gguf",
+    "BaseUrl": "required for openai_compatible",
+    "Model": "model identifier string — for openai_compatible"
+  }
 }
 ```
 
 `RoutingStrategy` defaults to `ChainOfResponsibility` if absent or unrecognised (see ADR-007). `ErrorCodePath` defaults to `error.code` (the OpenAI error response shape) if omitted.
 
 **Rules:**
-- The array is ordered — index 0 is the primary provider, subsequent entries are fallbacks in order
-- Exactly one entry with `"Type": "local_gguf"` must be present, and it must be last
-- `BaseUrl` is required for `openai_compatible` and must be omitted for `local_gguf`
+- The `Providers` array is ordered — index 0 is the primary provider, subsequent entries are fallbacks in order
+- The `Providers` array contains only `openai_compatible` entries; `local_gguf` is not a valid type here
+- `BaseUrl` is required for all entries in `Providers`
 - `DailyRequestLimit` and `RequestsPerMinute` of `0` mean no local limit is enforced (rely on reactive `429` handling only)
+- The `FinalFallback` section is required — InferRouter will not start without it (see ADR-009)
 
-**Startup validation:** InferRouter validates the provider list at startup and refuses to start if:
-- No `local_gguf` entry is present
-- A `local_gguf` entry is not last
-- An `openai_compatible` entry has no `BaseUrl`
-- The `ModelPath` for a `local_gguf` entry does not exist on disk
+**Startup validation:** InferRouter validates the configuration at startup and refuses to start if:
+- `FinalFallback` section is absent
+- A `local_gguf` entry appears in the `Providers` array (must be in `FinalFallback` instead)
+- An `openai_compatible` entry in `Providers` has no `BaseUrl`
+- The `FinalFallback.Type == local_gguf` and the `ModelPath` does not exist on disk
+- The `FinalFallback.Type == openai_compatible` and the server is unreachable at startup
 
 ---
 
 ## Adding a New Provider
 
-No code changes required. Add an entry to `appsettings.json` at the desired chain position and restart the container.
+No code changes required. Add an entry to the `Providers` array in `appsettings.json` at the desired chain position and restart the container.
 
 ---
 
