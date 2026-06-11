@@ -54,15 +54,15 @@ public class InferRouterWebAppFactory : WebApplicationFactory<Program>
                 cloudProvider.Setup(p => p.Name).Returns("test-provider");
                 cloudProvider.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
 
+                return new List<IInferenceClient> { cloudProvider.Object }.AsReadOnly();
+            });
+
+            services.AddSingleton<IInferenceClient>(_ =>
+            {
                 var localProvider = new Mock<IInferenceClient>();
                 localProvider.Setup(p => p.Name).Returns("test-local");
                 localProvider.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
-
-                return new List<IInferenceClient>
-                {
-                    cloudProvider.Object,
-                    localProvider.Object
-                }.AsReadOnly();
+                return localProvider.Object;
             });
         });
     }

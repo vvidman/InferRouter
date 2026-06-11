@@ -23,16 +23,14 @@ using Microsoft.Extensions.Logging;
 namespace InferRouter.Core.Services;
 
 public class ProviderOrchestrator(
-    IReadOnlyList<IInferenceClient> allProviders,
+    IReadOnlyList<IInferenceClient> providers,
+    IInferenceClient finalFallback,
     IRoutingStrategy routingStrategy,
     IRateLimitTracker rateLimitTracker,
     ErrorNormalizer errorNormalizer,
     OperationLogger operationLogger,
     ILogger<ProviderOrchestrator> logger)
 {
-    private readonly IInferenceClient? _localFallback =
-        allProviders.FirstOrDefault(p => p.Type == ProviderType.LocalGguf);
-
     public async Task<InferResult> ExecuteAsync(InferRequest request, CancellationToken ct)
     {
         operationLogger.LogStarted(request);
@@ -40,16 +38,14 @@ public class ProviderOrchestrator(
         var orderedCloud = routingStrategy.GetOrderedProviders();
 
         // Log rate_limit_hit for cloud providers excluded by the strategy (they are exhausted)
-        var allCloud = allProviders.Where(p => p.Type != ProviderType.LocalGguf).ToList();
-        foreach (var skipped in allCloud.Where(p => orderedCloud.All(op => op.Name != p.Name)))
+        foreach (var skipped in providers.Where(p => orderedCloud.All(op => op.Name != p.Name)))
             operationLogger.LogRateLimitHit(skipped.Name, request.RequestId);
 
         operationLogger.LogProviderOrdering(request.RequestId,
             orderedCloud.Select(p => p.Name).ToList().AsReadOnly());
 
         var toAttempt = new List<IInferenceClient>(orderedCloud);
-        if (_localFallback != null)
-            toAttempt.Add(_localFallback);
+        toAttempt.Add(finalFallback);
 
         for (int i = 0; i < toAttempt.Count; i++)
         {
@@ -119,16 +115,14 @@ public class ProviderOrchestrator(
     {
         var orderedCloud = routingStrategy.GetOrderedProviders();
 
-        var allCloud = allProviders.Where(p => p.Type != ProviderType.LocalGguf).ToList();
-        foreach (var skipped in allCloud.Where(p => orderedCloud.All(op => op.Name != p.Name)))
+        foreach (var skipped in providers.Where(p => orderedCloud.All(op => op.Name != p.Name)))
             operationLogger.LogRateLimitHit(skipped.Name, request.RequestId);
 
         operationLogger.LogProviderOrdering(request.RequestId,
             orderedCloud.Select(p => p.Name).ToList().AsReadOnly());
 
         var toAttempt = new List<IInferenceClient>(orderedCloud);
-        if (_localFallback != null)
-            toAttempt.Add(_localFallback);
+        toAttempt.Add(finalFallback);
 
         for (int i = 0; i < toAttempt.Count; i++)
         {

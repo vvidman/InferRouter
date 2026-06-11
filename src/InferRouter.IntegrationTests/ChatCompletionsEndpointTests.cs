@@ -44,12 +44,8 @@ public class ChatCompletionsSuccessFactory : InferRouterWebAppFactory
                 .ReturnsAsync(new InferResult("req-1", "test-provider", "test-model",
                     "Hello!", 10, 5, 50, false));
 
-            var local = new Mock<IInferenceClient>();
-            local.Setup(p => p.Name).Returns("test-local");
-            local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
-
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
-                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+                new List<IInferenceClient> { cloud.Object }.AsReadOnly());
         });
     }
 }
@@ -79,7 +75,8 @@ public class ChatCompletionsAllFailFactory : InferRouterWebAppFactory
                 .ThrowsAsync(new ProviderException(401, null, authMappings));
 
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
-                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+                new List<IInferenceClient> { cloud.Object }.AsReadOnly());
+            services.AddSingleton<IInferenceClient>(_ => local.Object);
         });
     }
 }
@@ -110,7 +107,8 @@ public class ChatCompletionsFallbackFactory : InferRouterWebAppFactory
                     "Fallback response", 8, 4, 200, true));
 
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
-                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+                new List<IInferenceClient> { cloud.Object }.AsReadOnly());
+            services.AddSingleton<IInferenceClient>(_ => local.Object);
         });
     }
 }
@@ -202,12 +200,8 @@ public class ChatCompletionsStreamFactory : InferRouterWebAppFactory
                     It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .Returns<InferRequest, CancellationToken>((_, _) => TwoChunks());
 
-            var local = new Mock<IInferenceClient>();
-            local.Setup(p => p.Name).Returns("test-local");
-            local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
-
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
-                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+                new List<IInferenceClient> { cloud.Object }.AsReadOnly());
         });
     }
 
@@ -275,7 +269,8 @@ public class ChatCompletionsStreamFallbackFactory : InferRouterWebAppFactory
                 .Returns<InferRequest, CancellationToken>((_, _) => FallbackChunks());
 
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
-                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+                new List<IInferenceClient> { cloud.Object }.AsReadOnly());
+            services.AddSingleton<IInferenceClient>(_ => local.Object);
         });
     }
 
@@ -333,12 +328,8 @@ public class ChatCompletionsStreamNoNativeFactory : InferRouterWebAppFactory
                     It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .Returns<InferRequest, CancellationToken>((_, _) => SimulatedChunks());
 
-            var local = new Mock<IInferenceClient>();
-            local.Setup(p => p.Name).Returns("test-local");
-            local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
-
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
-                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+                new List<IInferenceClient> { cloud.Object }.AsReadOnly());
         });
     }
 
@@ -447,7 +438,8 @@ public class ChatCompletionsStreamExhaustedFactory : InferRouterWebAppFactory
                 .Returns<InferRequest, CancellationToken>((_, _) => ThrowAuth());
 
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
-                new List<IInferenceClient> { cloud.Object, local.Object }.AsReadOnly());
+                new List<IInferenceClient> { cloud.Object }.AsReadOnly());
+            services.AddSingleton<IInferenceClient>(_ => local.Object);
         });
     }
 

@@ -38,24 +38,38 @@ public class ProviderOrchestratorTests
 
     private static OrchestratorBundle BuildOrchestrator(
         IReadOnlyList<Mock<IInferenceClient>> mocks,
+        Mock<IInferenceClient>? finalFallbackMock = null,
         Func<string, ProviderConfig>? configFactory = null)
     {
         var providerConfigs = mocks
             .Select(m => configFactory?.Invoke(m.Object.Name) ?? new ProviderConfig { Name = m.Object.Name })
             .ToList();
         var tracker = new RateLimitTracker(providerConfigs, NullLogger<RateLimitTracker>.Instance);
-        var providers = mocks.Select(m => m.Object).ToList<IInferenceClient>().AsReadOnly();
-        var cloudProviders = providers.Where(p => p.Type != ProviderType.LocalGguf).ToList().AsReadOnly();
+        var cloudProviders = mocks.Select(m => m.Object).ToList<IInferenceClient>().AsReadOnly();
         var strategy = new ChainOfResponsibilityStrategy(cloudProviders, tracker);
         var logDir = Path.Combine(Path.GetTempPath(), $"inferrouter-test-{Guid.NewGuid()}");
         var orchestrator = new ProviderOrchestrator(
-            providers,
+            cloudProviders,
+            (finalFallbackMock ?? MakeDefaultFinalFallback()).Object,
             strategy,
             tracker,
             new ErrorNormalizer(),
             new OperationLogger(logDir),
             NullLogger<ProviderOrchestrator>.Instance);
         return new OrchestratorBundle(orchestrator, tracker, logDir);
+    }
+
+    private static Mock<IInferenceClient> MakeDefaultFinalFallback()
+    {
+        var mock = new Mock<IInferenceClient>();
+        mock.Setup(p => p.Name).Returns("_default_fallback");
+        mock.Setup(p => p.Model).Returns("");
+        mock.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
+        mock.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ProviderException(401, null, [new ErrorMapping { HttpStatus = 401, InternalCategory = InternalErrorCategory.AuthError }]));
+        mock.Setup(p => p.CompleteStreamingAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(ThrowingAsyncEnumerable(new ProviderException(401, null, [new ErrorMapping { HttpStatus = 401, InternalCategory = InternalErrorCategory.AuthError }])));
+        return mock;
     }
 
     private static Mock<IInferenceClient> MakeProvider(string name, string? model = null)
@@ -391,7 +405,7 @@ public class ProviderOrchestratorTests
         llamaMock.Setup(p => p.CompleteStreamingAsync(request, It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerable(chunks));
 
-        var bundle = BuildOrchestrator([llamaMock]);
+        var bundle = BuildOrchestrator([], finalFallbackMock: llamaMock);
         var result = new List<StreamChunk>();
         await foreach (var chunk in bundle.Orchestrator.ExecuteStreamingAsync(request, CancellationToken.None))
             result.Add(chunk);
@@ -479,5 +493,66 @@ public class ProviderOrchestratorTests
             result.Add(chunk);
 
         Assert.All(result, c => Assert.Equal("p1", c.Model));
+    }
+
+    // FinalFallback injection
+
+    [Fact]
+    public async Task AllCloudProvidersFail_FinalFallbackIsCalled()
+    {
+        var p1 = MakeProvider("p1");
+        var fallback = new Mock<IInferenceClient>();
+        fallback.Setup(p => p.Name).Returns("fallback");
+        fallback.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
+        var request = MakeRequest();
+        var expected = MakeResult("fallback");
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(MakeRateLimitException());
+        fallback.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var bundle = BuildOrchestrator([p1], finalFallbackMock: fallback);
+        var result = await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal(expected, result);
+        fallback.Verify(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task FinalFallback_IsNeverPassedToRoutingStrategy()
+    {
+        var p1 = MakeProvider("p1");
+        var fallback = new Mock<IInferenceClient>();
+        fallback.Setup(p => p.Name).Returns("fallback");
+        fallback.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
+        var request = MakeRequest();
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(MakeRateLimitException());
+        fallback.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeResult("fallback"));
+
+        var cloudProviders = new List<IInferenceClient> { p1.Object }.AsReadOnly();
+        var mockStrategy = new Mock<IRoutingStrategy>();
+        mockStrategy.Setup(s => s.GetOrderedProviders()).Returns(cloudProviders);
+
+        var tracker = new RateLimitTracker(
+            [new ProviderConfig { Name = "p1" }],
+            NullLogger<RateLimitTracker>.Instance);
+        var logDir = Path.Combine(Path.GetTempPath(), $"inferrouter-test-{Guid.NewGuid()}");
+        var orchestrator = new ProviderOrchestrator(
+            cloudProviders,
+            fallback.Object,
+            mockStrategy.Object,
+            tracker,
+            new ErrorNormalizer(),
+            new OperationLogger(logDir),
+            NullLogger<ProviderOrchestrator>.Instance);
+
+        await orchestrator.ExecuteAsync(request, CancellationToken.None);
+
+        // Strategy was called and returned cloud-only providers
+        mockStrategy.Verify(s => s.GetOrderedProviders(), Times.AtLeastOnce);
+        // FinalFallback was used as the last resort after cloud failed
+        fallback.Verify(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()), Times.Once);
     }
 }
