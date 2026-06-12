@@ -1,330 +1,151 @@
 # InferRouter
 
-A self-hosted, provider-agnostic LLM inference proxy. Exposes a single OpenAI-compatible HTTP endpoint and internally routes requests through a fully configurable fallback chain — from any cloud or local HTTP provider down to a local GGUF model — with built-in rate limit tracking and structured operation logging.
+Self-hosted, provider-agnostic LLM inference proxy in C#/.NET 10. Exposes an OpenAI-compatible API that routes requests through a configurable fallback chain of cloud providers, with a local GGUF model or Ollama server as final fallback.
+
+Drop-in replacement for OpenAI or OpenRouter: change the base URL and API key, nothing else.
 
 ---
 
-## Why This Exists
+## What It Does
 
-Managing multiple LLM providers across projects means duplicated API key handling, scattered fallback logic, and tight coupling to specific provider SDKs. InferRouter centralizes all of that into a single sidecar service:
-
-- **One API key store** — secrets live in one place, mounted securely via Docker Secrets
-- **Transparent fallback** — if a provider hits its rate limit or fails, the caller never notices
-- **Provider flexibility** — add, remove, or reorder providers via config with no code changes
-- **Normalized error handling** — provider-specific HTTP status codes are mapped to a consistent internal taxonomy
-- **Operation log** — every inference call is recorded in a provider-agnostic structured log
-
-Any application that speaks the OpenAI chat completions API can use InferRouter as a drop-in inference backend.
+- Receives OpenAI-compatible requests (`/v1/chat/completions`, `/v1/models`)
+- Routes through a configurable provider chain (Groq → Gemini → ... → final fallback)
+- Falls back automatically on rate limits, errors, or unavailability
+- Streams responses via SSE when `"stream": true` is set
+- Passes through tool calling / function calling transparently to cloud providers
+- Runs entirely on your own infrastructure — no external dependencies beyond the providers you configure
 
 ---
 
-## Architecture Overview
+## Endpoints
 
-```mermaid
-flowchart LR
-    subgraph Callers
-        A[Any OpenAI-compatible client]
-    end
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat completion (streaming + non-streaming) |
+| `GET` | `/v1/models` | Model list (static from config or proxied from first available provider) |
+| `GET` | `/health` | Service liveness check |
+| `GET` | `/health/providers` | Per-provider health status via live probe |
+| `GET` | `/stats/live` | Current rate limit counters for all providers |
+| `GET` | `/stats/history` | Historical JSONL operation log for a given date |
 
-    subgraph InferRouter
-        API[OpenAI-compatible\nHTTP endpoint]
-        RC[ProviderOrchestrator]
-        RL[RateLimitTracker]
-        EH[ErrorNormalizer]
-        LOG[OperationLogger\nJSONL]
-        SR[SecretReader\ninjectable singleton]
+---
 
-        API --> RC
-        RC --> RL
-        RC --> EH
-        RC --> LOG
-        RC --> SR
-    end
+## Supported OpenAI API Features
 
-    subgraph Provider chain
-        P1[Provider 1\nopenai_compatible]
-        P2[Provider 2\nopenai_compatible]
-        PN[Provider N\nopenai_compatible]
-        FF[FinalFallback\nlocal_gguf or openai_compatible]
-    end
+| Feature | Status |
+|---|---|
+| Chat completions | ✅ |
+| Streaming (SSE) | ✅ |
+| Tool calling / function calling | ✅ (cloud providers); ❌ LlamaSharp (falls back to cloud) |
+| `temperature`, `max_tokens` | ✅ |
+| `top_p`, `frequency_penalty`, `presence_penalty` | ✅ |
+| `system_fingerprint` in response | ✅ |
+| `finish_reason` in response | ✅ |
+| Model discovery (`/v1/models`) | ✅ |
+| Multiple completions (`n > 1`) | ❌ |
+| Log probabilities (`logprobs`) | ❌ |
+| Vision / image input | ❌ |
+| Inbound API key validation | ❌ (by design — self-hosted, network-isolated) |
 
-    A --> API
-    RC --> P1
-    RC --> P2
-    RC --> PN
-    RC --> FF
-    P1 --> SR
-    P2 --> SR
-    PN --> SR
+---
+
+## Getting Started
+
+```bash
+# 1. Copy secret placeholders and fill in your API keys
+cp -r secrets.example secrets
+echo "your-groq-api-key"   > secrets/groq_api_key.txt
+echo "your-gemini-api-key" > secrets/gemini_api_key.txt
+
+# 2. Place a GGUF model file (if using local_gguf final fallback)
+#    Default path: models/model.gguf
+#    Download from https://huggingface.co/models?search=gguf
+
+# 3. Build and start
+docker compose -f docker/docker-compose.yml up --build
 ```
 
-**Fallback chain:** configurable ordered list of OpenAI-compatible providers, with an explicit `FinalFallback` as the guaranteed last resort. The fallback can be a LlamaSharp in-process model (`local_gguf`) or an OpenAI-compatible server such as Ollama (`openai_compatible`). The chain is defined entirely in configuration — no code changes are required to add, remove, or reorder providers.
+The service listens on port `5100`.
 
 ---
 
-## Key Design Decisions
+## Configuration
 
-- **Single outward-facing endpoint** — callers use one URL regardless of which provider actually handles the request. Provider changes are invisible to callers.
-
-- **Provider-agnostic operation log** — the log records *events*, not providers. The provider is an attribute. The log schema never changes when providers are added or swapped. → ADR-001
-
-- **Rate limit tracking in-memory** — provider quotas are tracked locally with UTC midnight resets. No external store is required. A `429` response from a provider triggers an immediate fallback and updates the local counter. → ADR-002
-
-- **Config-driven provider chain** — providers are defined in `appsettings.json` with type, base URL, model, fallback order, and error mappings. Any OpenAI-compatible HTTP endpoint can be added without code changes. → ADR-003
-
-- **Flexible final fallback** — the `FinalFallback` section supports two types: `local_gguf` (LlamaSharp in-process, no network dependency) or `openai_compatible` (e.g. Ollama server). Both implement the same `IInferenceClient` interface. → ADR-004, ADR-009
-
-- **Docker Secrets for API keys** — keys are mounted at `/run/secrets/` and never appear in environment variables or config files. The `secrets/` directory is git-ignored; `secrets.example/` documents the expected layout. → ADR-005
-
-- **Normalized error handling** — each provider config includes an `ErrorMappings` block that translates provider-specific HTTP status codes and error types to a consistent internal error category (`rate_limit`, `auth_error`, `model_unavailable`, `server_error`). This allows the fallback logic to make consistent decisions regardless of provider. → ADR-006
-
----
-
-## Routing Strategies
-
-InferRouter supports three routing strategies, configured via the `RoutingStrategy` field in `appsettings.json`. The strategy controls how the orchestrator picks which provider to try for each request.
-
-**`ChainOfResponsibility`** (default) — providers are tried in the order they appear in config. Predictable and easy to reason about; the right choice when providers have a clear priority order.
-
-**`WeightedRoundRobin`** — requests are distributed across providers in proportion to their `DailyRequestLimit`. Providers with higher quotas receive proportionally more traffic. Maximises total throughput across multiple free-tier providers. Providers with `DailyRequestLimit: 0` are excluded from weighted selection.
-
-**`LeastUsed`** — always routes to the provider with the lowest utilisation ratio (`DailyCount / DailyLimit`). Keeps quota consumption balanced across providers throughout the day. Tiebreaks randomly. Providers with `DailyRequestLimit: 0` are excluded.
-
-In all strategies, the `FinalFallback` provider is held in reserve as a hard final fallback and is never part of strategy selection.
-
-→ See [docs/routing-strategies.md](docs/routing-strategies.md) for full detail, config examples, and a strategy selection guide.
-
----
-
-## Provider Configuration
-
-Providers are defined as an ordered list of `openai_compatible` entries. The final fallback is configured separately in the `FinalFallback` section — it can be either `local_gguf` (LlamaSharp in-process) or `openai_compatible` (e.g. an Ollama server).
+All configuration lives in `appsettings.json` under the `InferRouter` key.
 
 ```json
 {
-  "RoutingStrategy": "ChainOfResponsibility",
-  "Providers": [
-    {
-      "Name": "provider-a",
-      "Type": "openai_compatible",
-      "BaseUrl": "https://api.provider-a.com/v1",
-      "Model": "model-name",
-      "DailyRequestLimit": 1000,
-      "RequestsPerMinute": 30,
-      "ErrorMappings": [
-        { "HttpStatus": 429, "ErrorCode": "rate_limit_exceeded", "InternalCategory": "RateLimit" },
-        { "HttpStatus": 401, "InternalCategory": "AuthError" },
-        { "HttpStatus": 503, "InternalCategory": "ServerError" }
-      ]
-    },
-    {
-      "Name": "provider-b",
-      "Type": "openai_compatible",
-      "BaseUrl": "https://api.provider-b.com/v1",
-      "Model": "model-name",
-      "DailyRequestLimit": 500,
-      "RequestsPerMinute": 10,
-      "ErrorMappings": [
-        { "HttpStatus": 429, "InternalCategory": "RateLimit" },
-        { "HttpStatus": 400, "ErrorCode": "quota_exceeded", "InternalCategory": "RateLimit" },
-        { "HttpStatus": 401, "InternalCategory": "AuthError" }
-      ]
+  "InferRouter": {
+    "OperationLogPath": "/var/log/inferrouter",
+    "RoutingStrategy": "ChainOfResponsibility",
+    "HideModels": false,
+    "Providers": [
+      {
+        "Name": "groq",
+        "Type": "openai_compatible",
+        "BaseUrl": "https://api.groq.com/openai/v1",
+        "Model": "llama-3.3-70b-versatile",
+        "DailyRequestLimit": 14400,
+        "RequestsPerMinute": 30,
+        "ErrorCodePath": "error.code",
+        "ErrorMappings": [
+          { "HttpStatus": 429, "InternalCategory": "RateLimit" },
+          { "HttpStatus": 401, "InternalCategory": "AuthError" },
+          { "HttpStatus": 503, "InternalCategory": "ServerError" }
+        ]
+      },
+      {
+        "Name": "gemini",
+        "Type": "openai_compatible",
+        "BaseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "Model": "gemini-2.0-flash",
+        "DailyRequestLimit": 1500,
+        "RequestsPerMinute": 10,
+        "ErrorCodePath": "error.status",
+        "ErrorMappings": [
+          { "HttpStatus": 429, "InternalCategory": "RateLimit" },
+          { "HttpStatus": 401, "InternalCategory": "AuthError" }
+        ]
+      }
+    ],
+    "FinalFallback": {
+      "Name": "local",
+      "Type": "local_gguf",
+      "ModelPath": "/models/model.gguf"
     }
-  ],
-  "FinalFallback": {
-    "Name": "local-llama",
-    "Type": "local_gguf",
-    "ModelPath": "/models/model.gguf"
   }
 }
 ```
 
-The `ErrorMappings` block is per-provider. An `HttpStatus` match is required; `ErrorCode` is an optional additional filter on the provider's error response body. `InternalCategory` drives fallback behavior:
+### Routing Strategies
 
-| InternalCategory | Fallback triggered |
+| Value | Behaviour |
 |---|---|
-| `RateLimit` | Yes |
-| `ModelUnavailable` | Yes |
-| `ServerError` | Yes (after retry) |
-| `AuthError` | No — logged as fatal, no fallback |
+| `ChainOfResponsibility` | Try providers in config order (default) |
+| `WeightedRoundRobin` | Distribute requests proportional to `DailyRequestLimit` |
+| `LeastUsed` | Always route to the provider with the lowest utilisation ratio |
 
----
+### HideModels
 
-## Observability
+Controls `GET /v1/models` behaviour:
 
-### Provider Health — `GET /health/providers`
+- `false` (default) — proxies the model list from the first reachable cloud provider
+- `true` — returns a static list built from the configured providers' `Model` fields
 
-Returns a health probe result for every configured provider. Each provider is contacted with a minimal 1-token request to determine its current status.
+### FinalFallback
 
-```json
-{
-  "providers": [
-    { "name": "groq", "status": "ok", "latency_ms": 312 },
-    { "name": "gemini", "status": "rate_limit", "http_status": 429 },
-    { "name": "llamasharp", "status": "ok", "latency_ms": 1840 }
-  ]
-}
-```
+Two types are supported:
 
-Always returns `200 OK`. Provider status values: `ok`, `rate_limit`, `auth_error`, `server_error`, `model_unavailable`, `unknown_error`.
-
----
-
-### Live Stats — `GET /stats/live`
-
-Returns current rate limit state for all configured providers:
-
-```json
-{
-  "providers": [
-    { "provider_name": "groq", "daily_limit": 14400, "daily_count": 312, "rpm_limit": 30, "rpm_window_count": 4, "is_exhausted": false },
-    { "provider_name": "gemini", "daily_limit": 1500, "daily_count": 1500, "rpm_limit": 10, "rpm_window_count": 0, "is_exhausted": true },
-    { "provider_name": "llamasharp", "daily_limit": 0, "daily_count": 0, "rpm_limit": 0, "rpm_window_count": 0, "is_exhausted": false }
-  ]
-}
-```
-
-### Log History — `GET /stats/history`
-
-Returns the raw JSONL content of a day's operation log.
-
-- `GET /stats/history` — today's log (UTC)
-- `GET /stats/history?date=2026-05-25` — log for a specific date
-
-Returns `200 OK` with `Content-Type: text/plain` if the file exists, `404` if it does not.
-
----
-
-## Operation Log
-
-Log files are written to the directory configured by `OperationLogPath` (default: `/var/log/inferrouter`), one file per UTC day: `operations-{yyyy-MM-dd}.jsonl`. Each new write after midnight automatically goes to the new day's file.
-
-Every inference call produces one or more JSONL entries. The schema is provider-agnostic.
-
-**Successful call:**
-```json
-{"ts":"2026-05-25T10:00:00Z","request_id":"uuid","event":"infer_completed","provider":"provider-a","model":"model-name","prompt_tokens":120,"completion_tokens":340,"latency_ms":310,"fallback":false,"status":"ok"}
-```
-
-**Fallback triggered:**
-```json
-{"ts":"2026-05-25T10:00:05Z","request_id":"uuid","event":"infer_fallback","from_provider":"provider-a","to_provider":"provider-b","reason":"rate_limit"}
-{"ts":"2026-05-25T10:00:06Z","request_id":"uuid","event":"infer_completed","provider":"provider-b","model":"model-name","prompt_tokens":120,"completion_tokens":340,"latency_ms":890,"fallback":true,"status":"ok"}
-```
-
-**Event types:**
-
-| Event | Description |
-|---|---|
-| `infer_started` | Request received by the router |
-| `infer_completed` | Successful response returned |
-| `infer_fallback` | Provider switch occurred |
-| `infer_failed` | All providers exhausted or errored |
-| `rate_limit_hit` | Local quota exceeded for a provider |
-
----
-
-## Secret Management
-
-API keys are never stored in config files or environment variables. They are mounted as Docker Secrets:
-
-```
-secrets/                  ← git-ignored, lives on the host only
-    groq_api_key.txt
-    gemini_api_key.txt
-
-secrets.example/          ← committed to the repo, documents expected layout
-    groq_api_key.txt          ← contains placeholder text
-    gemini_api_key.txt
-```
-
-```yaml
-# docker/docker-compose.yml (excerpt)
-services:
-  inferrouter:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    ports:
-      - "5100:8080"
-    secrets:
-      - groq_api_key
-      - gemini_api_key
-    volumes:
-      - type: bind
-        source: ../models
-        target: /models
-        read_only: true
-      - type: bind
-        source: ../logs
-        target: /var/log/inferrouter
-
-secrets:
-  groq_api_key:
-    file: ../secrets/groq_api_key.txt
-  gemini_api_key:
-    file: ../secrets/gemini_api_key.txt
-```
-
-Inside the container, keys are available at `/run/secrets/groq_api_key` and `/run/secrets/gemini_api_key`. Add entries to both `secrets:` blocks when configuring additional providers.
-
----
-
-## Tested Providers
-
-The following providers have been validated against InferRouter. Their config snippets can be used as a starting point.
-
-### Groq
-
-```json
-{
-  "Name": "groq",
-  "Type": "openai_compatible",
-  "BaseUrl": "https://api.groq.com/openai/v1",
-  "Model": "llama-3.3-70b-versatile",
-  "DailyRequestLimit": 14400,
-  "RequestsPerMinute": 30,
-  "ErrorMappings": [
-    { "HttpStatus": 429, "InternalCategory": "RateLimit" },
-    { "HttpStatus": 401, "InternalCategory": "AuthError" },
-    { "HttpStatus": 503, "InternalCategory": "ServerError" }
-  ]
-}
-```
-
-### Google Gemini API
-
-```json
-{
-  "Name": "gemini",
-  "Type": "openai_compatible",
-  "BaseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
-  "Model": "gemini-2.5-flash",
-  "DailyRequestLimit": 1500,
-  "RequestsPerMinute": 10,
-  "ErrorMappings": [
-    { "HttpStatus": 429, "InternalCategory": "RateLimit" },
-    { "HttpStatus": 400, "ErrorCode": "RESOURCE_EXHAUSTED", "InternalCategory": "RateLimit" },
-    { "HttpStatus": 401, "InternalCategory": "AuthError" },
-    { "HttpStatus": 503, "InternalCategory": "ServerError" }
-  ]
-}
-```
-
-### LlamaSharp (local GGUF — FinalFallback option 1)
-
+**Option 1 — LlamaSharp (in-process GGUF, no network dependency):**
 ```json
 "FinalFallback": {
-  "Name": "llamasharp",
+  "Name": "local",
   "Type": "local_gguf",
-  "ModelPath": "/models/llama.gguf"
+  "ModelPath": "/models/model.gguf"
 }
 ```
 
-Any GGUF-format model compatible with LlamaSharp can be used. No API key required. The model is loaded lazily on first use.
-
-### Ollama (OpenAI-compatible server — FinalFallback option 2)
-
+**Option 2 — Ollama or any OpenAI-compatible local server:**
 ```json
 "FinalFallback": {
   "Name": "ollama",
@@ -334,7 +155,43 @@ Any GGUF-format model compatible with LlamaSharp can be used. No API key require
 }
 ```
 
-Use this when you prefer managing a separate Ollama server instead of GGUF files and LlamaSharp's native dependencies. InferRouter performs a reachability check against `BaseUrl` at startup — the Ollama server must be running before InferRouter starts.
+When `Type: openai_compatible` is used, InferRouter checks reachability at startup and will refuse to start if the server is not responding. The Ollama server must be running before InferRouter starts.
+
+### Secrets
+
+API keys are managed via Docker Secrets. Place key files in the `secrets/` directory:
+
+```
+secrets/
+  groq_api_key.txt
+  gemini_api_key.txt
+```
+
+Key files are mounted into the container at `/run/secrets/{provider_name}_api_key`. Keys are read fresh on every request — Docker Secret rotation is picked up without a restart.
+
+---
+
+## Testing Against InferRouter
+
+Any project built against the OpenAI API can be pointed at InferRouter by changing two things:
+
+```python
+# Python (openai SDK)
+client = openai.OpenAI(
+    base_url="http://192.168.0.69:5100/v1",
+    api_key="unused"   # InferRouter does not validate inbound keys
+)
+```
+
+```javascript
+// JavaScript (openai SDK)
+const client = new OpenAI({
+  baseURL: "http://192.168.0.69:5100/v1",
+  apiKey: "unused"
+});
+```
+
+Tool calling, streaming, and sampling parameters all work as expected with cloud providers.
 
 ---
 
@@ -344,62 +201,37 @@ Use this when you prefer managing a separate Ollama server instead of GGUF files
 |---|---|
 | Runtime | .NET 10, C# |
 | HTTP layer | ASP.NET Core Minimal API |
-| Local inference | LlamaSharp 0.20.0 (GGUF) |
-| Operation log | JSONL (append-only file) |
+| Local inference | LlamaSharp 0.20.0 (GGUF via llama.cpp) |
+| Operation log | Append-only JSONL, daily rotation |
 | Containers | Docker Compose |
 | Secret management | Docker Secrets |
 
 ---
 
-## Project Status
+## Project Structure
 
-**Implemented.**
-
-Done:
-- `ILlmProvider` interface + per-provider implementations (`OpenAiCompatibleProvider`, `LlamaSharpProvider`)
-- `ProviderOrchestrator` with three pluggable routing strategies (`ChainOfResponsibility`, `WeightedRoundRobin`, `LeastUsed`)
-- `RateLimitTracker` with UTC midnight reset and 60-second sliding RPM window
-- `ErrorNormalizer` with per-provider mapping config
-- `OperationLogger` (JSONL, append-only)
-- `ProviderHealthChecker` — live provider health probing via minimal 1-token requests
-- `StatsService` — live rate limit stats and historical log retrieval
-- OpenAI-compatible `/v1/chat/completions` endpoint + `/health` endpoint
-- `GET /health/providers` — per-provider health status
-- `GET /stats/live` and `GET /stats/history` — observability endpoints
-- Docker Compose stack with secret mounting and model volume
-- ADRs for all key design decisions (ADR-001 through ADR-006)
-- `SecretReader` refactored from static class to injectable singleton — keys read fresh per request in `OpenAiCompatibleProvider.CompleteAsync`, never cached in a field; Docker Secret rotation picked up without restart
-- Unit tests (`InferRouter.Tests`) and integration tests (`InferRouter.IntegrationTests`) covering all endpoints and core services
+```
+InferRouter/
+├── src/
+│   ├── InferRouter.Core/            ← interfaces, domain models, zero external deps
+│   ├── InferRouter.Providers/       ← IInferenceClient implementations
+│   └── InferRouter.Api/             ← ASP.NET Core host, endpoints, DI composition
+├── docker/
+│   └── docker-compose.yml
+├── secrets.example/
+├── docs/
+│   ├── architecture.md
+│   ├── routing-strategies.md
+│   └── adr/                         ← ADR-001 through ADR-010
+├── README.md
+└── InferRouter.sln
+```
 
 ---
 
-## Getting Started
+## Reference Docs
 
-```bash
-# 1. Copy secret placeholders and fill in your API keys
-cp -r secrets.example secrets
-echo "your-groq-api-key" > secrets/groq_api_key.txt
-echo "your-gemini-api-key" > secrets/gemini_api_key.txt
-
-# 2. Provide a GGUF model file at the path configured in appsettings.json
-#    Default: models/model.gguf (mounted into the container at /models/model.gguf)
-#    Download a GGUF model from https://huggingface.co/models?search=gguf
-#    and place it at models/model.gguf
-
-# 3. Start the router
-cd docker && docker compose up -d
-```
-
-**Smoke test** — verify the router is working after startup:
-
-```bash
-# Health check
-curl http://localhost:5100/health
-
-# Chat completion
-curl http://localhost:5100/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"","messages":[{"role":"user","content":"hello"}]}'
-```
-
-The router is available at `http://localhost:5100/v1/chat/completions` — drop-in compatible with any OpenAI SDK client.
+- `docs/architecture.md` — layer diagrams, interfaces, data flow
+- `docs/routing-strategies.md` — routing strategy details and when to use each
+- `docs/adr/` — one ADR per architectural decision (ADR-001 through ADR-010)
+- `docs/soup.md` — SOUP dependency list
