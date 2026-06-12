@@ -16,4 +16,9 @@
 
 namespace InferRouter.Core.Domain;
 
-public record ChatMessage(string Role, string Content);
+public record ChatMessage(
+    string Role,
+    string? Content,
+    string? ToolCallId = null,
+    IReadOnlyList<ToolCall>? ToolCalls = null
+);

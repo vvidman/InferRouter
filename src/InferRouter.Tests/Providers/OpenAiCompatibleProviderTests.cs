@@ -22,6 +22,7 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Xunit;
 
 namespace InferRouter.Tests.Providers;
@@ -39,6 +40,15 @@ public class OpenAiCompatibleProviderTests
 
     private static InferRequest MakeRequest() =>
         new("req-001", [new ChatMessage("user", "hello")], null, null, null, null, null, null);
+
+    private static InferRequest MakeRequestWithTools() =>
+        new("req-tools", [new ChatMessage("user", "What's the weather?")], null, null, null, null, null, null,
+            Tools:
+            [
+                new ToolDefinition("function",
+                    new ToolFunction("get_weather", "Get the weather", null))
+            ],
+            ToolChoice: "auto");
 
     private static OpenAiCompatibleProvider MakeProvider(HttpMessageHandler handler)
     {
@@ -231,5 +241,110 @@ public class OpenAiCompatibleProviderTests
 
         Assert.Equal(429, ex.HttpStatus);
         Assert.Equal("rate_limit_exceeded", ex.RawErrorCode);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_WithTools_OutgoingBodyContainsToolsArray()
+    {
+        string? capturedBody = null;
+        var handler = new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"model\":\"gpt-test\",\"choices\":[{\"message\":{\"content\":null,\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}",
+                Encoding.UTF8, "application/json")
+        }, async req => capturedBody = await req.Content!.ReadAsStringAsync());
+
+        var provider = MakeProvider(handler);
+        await provider.CompleteAsync(MakeRequestWithTools(), CancellationToken.None);
+
+        Assert.NotNull(capturedBody);
+        Assert.Contains("\"tools\"", capturedBody);
+        Assert.Contains("get_weather", capturedBody);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_WithToolChoice_OutgoingBodyContainsToolChoice()
+    {
+        string? capturedBody = null;
+        var handler = new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"model\":\"gpt-test\",\"choices\":[{\"message\":{\"content\":null,\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}",
+                Encoding.UTF8, "application/json")
+        }, async req => capturedBody = await req.Content!.ReadAsStringAsync());
+
+        var provider = MakeProvider(handler);
+        await provider.CompleteAsync(MakeRequestWithTools(), CancellationToken.None);
+
+        Assert.NotNull(capturedBody);
+        Assert.Contains("\"tool_choice\":\"auto\"", capturedBody);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_ResponseWithToolCalls_InferResultToolCallsPopulated()
+    {
+        var responseJson =
+            "{\"model\":\"gpt-test\",\"choices\":[{\"message\":{\"content\":null,\"tool_calls\":[{\"id\":\"call_abc\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"London\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}";
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+        };
+
+        var provider = MakeProvider(new FakeHandler(response));
+        var result = await provider.CompleteAsync(MakeRequest(), CancellationToken.None);
+
+        Assert.NotNull(result.ToolCalls);
+        Assert.Single(result.ToolCalls);
+        Assert.Equal("call_abc", result.ToolCalls[0].Id);
+        Assert.Equal("function", result.ToolCalls[0].Type);
+        Assert.Equal("get_weather", result.ToolCalls[0].Function.Name);
+        Assert.Equal("{\"city\":\"London\"}", result.ToolCalls[0].Function.Arguments);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_ResponseWithFinishReasonToolCalls_FinishReasonPropagated()
+    {
+        var responseJson =
+            "{\"model\":\"gpt-test\",\"choices\":[{\"message\":{\"content\":null,\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"fn\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}";
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+        };
+
+        var provider = MakeProvider(new FakeHandler(response));
+        var result = await provider.CompleteAsync(MakeRequest(), CancellationToken.None);
+
+        Assert.Equal("tool_calls", result.FinishReason);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_ToolRoleMessage_OutgoingBodyContainsToolCallId()
+    {
+        string? capturedBody = null;
+        var handler = new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"model\":\"gpt-test\",\"choices\":[{\"message\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}",
+                Encoding.UTF8, "application/json")
+        }, async req => capturedBody = await req.Content!.ReadAsStringAsync());
+
+        var provider = MakeProvider(handler);
+        var request = new InferRequest(
+            "req-tool-role",
+            [
+                new ChatMessage("user", "Use the tool"),
+                new ChatMessage("assistant", null, ToolCalls:
+                [
+                    new ToolCall("call_xyz", "function", new ToolCallFunction("my_fn", "{}"))
+                ]),
+                new ChatMessage("tool", "Tool result", ToolCallId: "call_xyz")
+            ],
+            null, null, null, null, null, null);
+
+        await provider.CompleteAsync(request, CancellationToken.None);
+
+        Assert.NotNull(capturedBody);
+        Assert.Contains("\"tool_call_id\"", capturedBody);
+        Assert.Contains("call_xyz", capturedBody);
     }
 }

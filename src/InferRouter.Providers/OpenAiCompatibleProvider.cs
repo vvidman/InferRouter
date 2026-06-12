@@ -56,7 +56,7 @@ public class OpenAiCompatibleProvider : IInferenceClient
 
     public async Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct)
     {
-        var apiKey = _secretReader.ReadApiKey(_config.Name) 
+        var apiKey = _secretReader.ReadApiKey(_config.Name)
             ?? throw new ProviderException(401, "missing_api_key", _config.ErrorMappings);
 
         var modelName = (_hideProviderModel || string.IsNullOrEmpty(request.Model))
@@ -67,13 +67,30 @@ public class OpenAiCompatibleProvider : IInferenceClient
         {
             Model = modelName ?? "",
             Messages = request.Messages
-                .Select(m => new ChatRequestMessage { Role = m.Role, Content = m.Content })
+                .Select(m => new ChatRequestMessage
+                {
+                    Role = m.Role,
+                    Content = m.Content,
+                    ToolCallId = m.ToolCallId,
+                    ToolCalls = m.ToolCalls?.Select(tc => new ToolCallDto
+                    {
+                        Id = tc.Id,
+                        Type = tc.Type,
+                        Function = new ToolCallFunctionDto { Name = tc.Function.Name, Arguments = tc.Function.Arguments }
+                    }).ToList()
+                })
                 .ToList(),
             MaxTokens = request.MaxTokens,
             Temperature = request.Temperature,
             TopP = request.TopP,
             FrequencyPenalty = request.FrequencyPenalty,
-            PresencePenalty = request.PresencePenalty
+            PresencePenalty = request.PresencePenalty,
+            Tools = request.Tools?.Select(t => new ToolDefinitionDto
+            {
+                Type = t.Type,
+                Function = new ToolFunctionDto { Name = t.Function.Name, Description = t.Function.Description, Parameters = t.Function.Parameters }
+            }).ToList(),
+            ToolChoice = request.ToolChoice
         };
 
         var json = JsonSerializer.Serialize(body, SerializerOptions);
@@ -97,16 +114,20 @@ public class OpenAiCompatibleProvider : IInferenceClient
         var chatResponse = JsonSerializer.Deserialize<ChatCompletionResponse>(responseBody, SerializerOptions)
             ?? throw new ProviderException((int)response.StatusCode, null, _config.ErrorMappings, "Empty response from provider");
 
+        var choice = chatResponse.Choices[0];
         return new InferResult(
             RequestId: request.RequestId,
             ProviderName: _config.Name,
             Model: chatResponse.Model,
-            Content: chatResponse.Choices[0].Message.Content,
-            FinishReason: chatResponse.Choices.Count > 0 ? chatResponse.Choices[0].FinishReason : null,
+            Content: choice.Message.Content,
+            FinishReason: chatResponse.Choices.Count > 0 ? choice.FinishReason : null,
             PromptTokens: chatResponse.Usage.PromptTokens,
             CompletionTokens: chatResponse.Usage.CompletionTokens,
             LatencyMs: sw.ElapsedMilliseconds,
-            WasFallback: false
+            WasFallback: false,
+            ToolCalls: choice.Message.ToolCalls?
+                .Select(tc => new ToolCall(tc.Id, tc.Type, new ToolCallFunction(tc.Function.Name, tc.Function.Arguments)))
+                .ToList()
         );
     }
 
@@ -125,14 +146,31 @@ public class OpenAiCompatibleProvider : IInferenceClient
         {
             Model = modelName ?? "",
             Messages = request.Messages
-                .Select(m => new ChatRequestMessage { Role = m.Role, Content = m.Content })
+                .Select(m => new ChatRequestMessage
+                {
+                    Role = m.Role,
+                    Content = m.Content,
+                    ToolCallId = m.ToolCallId,
+                    ToolCalls = m.ToolCalls?.Select(tc => new ToolCallDto
+                    {
+                        Id = tc.Id,
+                        Type = tc.Type,
+                        Function = new ToolCallFunctionDto { Name = tc.Function.Name, Arguments = tc.Function.Arguments }
+                    }).ToList()
+                })
                 .ToList(),
             MaxTokens = request.MaxTokens,
             Temperature = request.Temperature,
             TopP = request.TopP,
             FrequencyPenalty = request.FrequencyPenalty,
             PresencePenalty = request.PresencePenalty,
-            Stream = true
+            Stream = true,
+            Tools = request.Tools?.Select(t => new ToolDefinitionDto
+            {
+                Type = t.Type,
+                Function = new ToolFunctionDto { Name = t.Function.Name, Description = t.Function.Description, Parameters = t.Function.Parameters }
+            }).ToList(),
+            ToolChoice = request.ToolChoice
         };
 
         var json = JsonSerializer.Serialize(body, SerializerOptions);
@@ -184,6 +222,15 @@ public class OpenAiCompatibleProvider : IInferenceClient
                     ? sseChunk.Choices[0].Delta.Content ?? ""
                     : "";
 
+                List<ToolCallDelta>? toolCallsDelta = null;
+                if (sseChunk.Choices.Count > 0 && sseChunk.Choices[0].Delta.ToolCalls is { Count: > 0 } rawDeltas)
+                {
+                    toolCallsDelta = rawDeltas.Select(tc => new ToolCallDelta(
+                        tc.Index, tc.Id, tc.Type,
+                        tc.Function is null ? null : new ToolCallFunctionDelta(tc.Function.Name, tc.Function.Arguments)))
+                        .ToList();
+                }
+
                 if (pending is not null)
                     yield return pending;
 
@@ -193,7 +240,8 @@ public class OpenAiCompatibleProvider : IInferenceClient
                     IsLast: false,
                     PromptTokens: sseChunk.Usage?.PromptTokens,
                     CompletionTokens: sseChunk.Usage?.CompletionTokens,
-                    FinishReason: finishReason);
+                    FinishReason: finishReason,
+                    ToolCallsDelta: toolCallsDelta);
             }
 
             if (pending is not null)
@@ -231,12 +279,42 @@ public class OpenAiCompatibleProvider : IInferenceClient
         public float? TopP { get; set; }
         public float? FrequencyPenalty { get; set; }
         public float? PresencePenalty { get; set; }
+        public List<ToolDefinitionDto>? Tools { get; set; }
+        public string? ToolChoice { get; set; }
     }
 
     private class ChatRequestMessage
     {
         public string Role { get; set; } = "";
-        public string Content { get; set; } = "";
+        public string? Content { get; set; }
+        public string? ToolCallId { get; set; }
+        public List<ToolCallDto>? ToolCalls { get; set; }
+    }
+
+    private class ToolDefinitionDto
+    {
+        public string Type { get; set; } = "";
+        public ToolFunctionDto Function { get; set; } = new();
+    }
+
+    private class ToolFunctionDto
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public JsonElement? Parameters { get; set; }
+    }
+
+    private class ToolCallDto
+    {
+        public string Id { get; set; } = "";
+        public string Type { get; set; } = "";
+        public ToolCallFunctionDto Function { get; set; } = new();
+    }
+
+    private class ToolCallFunctionDto
+    {
+        public string Name { get; set; } = "";
+        public string Arguments { get; set; } = "";
     }
 
     private class ChatCompletionResponse
@@ -254,7 +332,8 @@ public class OpenAiCompatibleProvider : IInferenceClient
 
     private class ChatResponseMessage
     {
-        public string Content { get; set; } = "";
+        public string? Content { get; set; }
+        public List<ToolCallDto>? ToolCalls { get; set; }
     }
 
     private class ChatUsage
@@ -278,6 +357,21 @@ public class OpenAiCompatibleProvider : IInferenceClient
     private class SseDelta
     {
         public string? Content { get; set; }
+        public List<ToolCallDeltaDto>? ToolCalls { get; set; }
+    }
+
+    private class ToolCallDeltaDto
+    {
+        public int Index { get; set; }
+        public string? Id { get; set; }
+        public string? Type { get; set; }
+        public ToolCallFunctionDeltaDto? Function { get; set; }
+    }
+
+    private class ToolCallFunctionDeltaDto
+    {
+        public string? Name { get; set; }
+        public string? Arguments { get; set; }
     }
 
     private class SseUsage

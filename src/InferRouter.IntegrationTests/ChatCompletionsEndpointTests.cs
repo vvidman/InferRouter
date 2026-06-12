@@ -500,3 +500,50 @@ public class ChatCompletionsEndpointTests_StreamExhausted(ChatCompletionsStreamE
             "Expected a Warning log from ChatCompletionsEndpoint about providers being exhausted");
     }
 }
+
+public class ChatCompletionsEndpointTests_ToolCalling(ChatCompletionsSuccessFactory factory)
+    : IClassFixture<ChatCompletionsSuccessFactory>
+{
+    private static StringContent JsonBody(string json) =>
+        new(json, Encoding.UTF8, "application/json");
+
+    [Fact]
+    public async Task RequestWithToolsArray_Returns200WithFinishReason()
+    {
+        var client = factory.CreateClient();
+        var body = """
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "What is the weather?"}],
+                "tools": [{"type": "function", "function": {"name": "get_weather", "description": "Get weather"}}]
+            }
+            """;
+
+        var response = await client.PostAsync("/v1/chat/completions", JsonBody(body));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var finishReason = doc.RootElement.GetProperty("choices")[0].GetProperty("finish_reason").GetString();
+        Assert.NotNull(finishReason);
+    }
+
+    [Fact]
+    public async Task RequestWithToolCallIdInMessage_DoesNotReturn400()
+    {
+        var client = factory.CreateClient();
+        var body = """
+            {
+                "model": "test-model",
+                "messages": [
+                    {"role": "user", "content": "Call the tool"},
+                    {"role": "assistant", "content": null, "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "fn", "arguments": "{}"}}]},
+                    {"role": "tool", "content": "result", "tool_call_id": "call_1"}
+                ]
+            }
+            """;
+
+        var response = await client.PostAsync("/v1/chat/completions", JsonBody(body));
+
+        Assert.NotEqual(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+}

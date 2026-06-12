@@ -36,6 +36,10 @@ public class LlamaSharpProviderTests
     private static InferRequest MakeRequest() =>
         new("req-001", [new ChatMessage("user", "hello")], "local-model", null, null, null, null, null);
 
+    private static InferRequest MakeRequestWithTools() =>
+        new("req-tools", [new ChatMessage("user", "hello")], "local-model", null, null, null, null, null,
+            Tools: [new ToolDefinition("function", new ToolFunction("fn", null, null))]);
+
     [Fact]
     public async Task CompleteAsync_ModelFileNotFound_ThrowsProviderException_WithModelLoadFailedCode()
     {
@@ -222,5 +226,30 @@ public class LlamaSharpProviderTests
         Assert.Equal("", chunks[0].Delta);
         Assert.Equal(5, chunks[0].PromptTokens);
         Assert.Equal(0, chunks[0].CompletionTokens);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_WithTools_ThrowsProviderExceptionWithToolCallingNotSupportedCode()
+    {
+        using var provider = MakeProvider();
+        var ex = await Assert.ThrowsAsync<ProviderException>(() =>
+            provider.CompleteAsync(MakeRequestWithTools(), CancellationToken.None));
+
+        Assert.Equal("tool_calling_not_supported", ex.RawErrorCode);
+        Assert.Equal(400, ex.HttpStatus);
+    }
+
+    [Fact]
+    public async Task CompleteStreamingAsync_WithTools_ThrowsProviderException()
+    {
+        using var provider = MakeProvider();
+
+        var ex = await Assert.ThrowsAsync<ProviderException>(async () =>
+        {
+            await foreach (var _ in provider.CompleteStreamingAsync(MakeRequestWithTools(), CancellationToken.None))
+            { }
+        });
+
+        Assert.Equal("tool_calling_not_supported", ex.RawErrorCode);
     }
 }

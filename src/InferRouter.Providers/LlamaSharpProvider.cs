@@ -49,6 +49,14 @@ public partial class LlamaSharpProvider : IInferenceClient, IDisposable
 
     public virtual async Task<InferResult> CompleteAsync(InferRequest request, CancellationToken ct)
     {
+        if (request.Tools is { Count: > 0 })
+        {
+            IReadOnlyList<ErrorMapping> mappings = _config.ErrorMappings.Count > 0
+                ? _config.ErrorMappings
+                : [new ErrorMapping { HttpStatus = 400, InternalCategory = InternalErrorCategory.ModelUnavailable }];
+            throw new ProviderException(400, "tool_calling_not_supported", mappings);
+        }
+
         if (_permanentlyFailed)
             throw new ProviderException(500, "model_permanently_failed", [],
                 $"LlamaSharp provider is permanently unavailable: {_permanentFailureCause?.Message}");
@@ -60,7 +68,7 @@ public partial class LlamaSharpProvider : IInferenceClient, IDisposable
 
             var promptBuilder = new StringBuilder();
             foreach (var msg in request.Messages)
-                promptBuilder.AppendLine($"{msg.Role}: {msg.Content}");
+                promptBuilder.AppendLine($"{msg.Role}: {msg.Content ?? ""}");
             promptBuilder.Append("assistant:");
 
             var sw = Stopwatch.StartNew();
@@ -115,7 +123,7 @@ public partial class LlamaSharpProvider : IInferenceClient, IDisposable
         // serialises behind the same semaphore as direct completion calls.
         var result = await CompleteAsync(request, ct);
 
-        foreach (var chunk in SplitIntoChunks(result.Content, wordsPerChunk: 4))
+        foreach (var chunk in SplitIntoChunks(result.Content ?? "", wordsPerChunk: 4))
         {
             ct.ThrowIfCancellationRequested();
             yield return new StreamChunk(

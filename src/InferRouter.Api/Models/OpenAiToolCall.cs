@@ -18,15 +18,13 @@ using System.Text.Json.Serialization;
 
 namespace InferRouter.Api.Models;
 
-public record OpenAiMessage(
-    [property: JsonPropertyName("role")] string Role,
-    [property: JsonPropertyName("content")]
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    string? Content,
-    [property: JsonPropertyName("tool_call_id")]
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    string? ToolCallId = null,
-    [property: JsonPropertyName("tool_calls")]
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    List<OpenAiToolCall>? ToolCalls = null
+public record OpenAiToolCall(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("function")] OpenAiToolCallFunction Function
+);
+
+public record OpenAiToolCallFunction(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("arguments")] string Arguments
 );

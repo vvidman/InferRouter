@@ -27,4 +27,6 @@ public record OpenAiChatRequest(
     [property: JsonPropertyName("stream")] bool? Stream,
     [property: JsonPropertyName("top_p")] float? TopP,
     [property: JsonPropertyName("frequency_penalty")] float? FrequencyPenalty,
-    [property: JsonPropertyName("presence_penalty")] float? PresencePenalty);
+    [property: JsonPropertyName("presence_penalty")] float? PresencePenalty,
+    [property: JsonPropertyName("tools")] List<OpenAiToolDefinition>? Tools = null,
+    [property: JsonPropertyName("tool_choice")] string? ToolChoice = null);

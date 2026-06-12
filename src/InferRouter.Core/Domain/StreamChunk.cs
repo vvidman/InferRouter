@@ -23,5 +23,6 @@ public record StreamChunk(
     int? PromptTokens,
     int? CompletionTokens,
     string Model = "",
-    string? FinishReason = null
+    string? FinishReason = null,
+    IReadOnlyList<ToolCallDelta>? ToolCallsDelta = null
 );

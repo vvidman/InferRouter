@@ -84,8 +84,18 @@ public class ProviderOrchestratorTests
     private static InferRequest MakeRequest(string id = "req-001") =>
         new(id, [new ChatMessage("user", "hello")], "test-model", null, null, null, null, null);
 
+    private static InferRequest MakeRequestWithTools(string id = "req-tools") =>
+        new(id, [new ChatMessage("user", "hello")], "test-model", null, null, null, null, null,
+            Tools: [new ToolDefinition("function", new ToolFunction("fn", null, null))]);
+
     private static InferResult MakeResult(string providerName, string requestId = "req-001") =>
         new(requestId, providerName, "test-model", "Hello!", "stop", 10, 20, 100, false);
+
+    private static IReadOnlyList<ToolCall> MakeToolCalls() =>
+        [new ToolCall("call_1", "function", new ToolCallFunction("fn", "{}"))];
+
+    private static ProviderException MakeModelUnavailableException() =>
+        new(400, "tool_calling_not_supported", [new ErrorMapping { HttpStatus = 400, InternalCategory = InternalErrorCategory.ModelUnavailable }]);
 
     private static ProviderException MakeRateLimitException() =>
         new(429, null, [new ErrorMapping { HttpStatus = 429, InternalCategory = InternalErrorCategory.RateLimit }]);
@@ -554,6 +564,45 @@ public class ProviderOrchestratorTests
         mockStrategy.Verify(s => s.GetOrderedProviders(), Times.AtLeastOnce);
         // FinalFallback was used as the last resort after cloud failed
         fallback.Verify(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // Tool calling
+
+    [Fact]
+    public async Task CloudProvider_SucceedsWithToolCalls_ToolCallsPassedThroughInResult()
+    {
+        var p1 = MakeProvider("p1");
+        var request = MakeRequest();
+        var toolCalls = MakeToolCalls();
+        var expected = new InferResult(request.RequestId, "p1", "test-model", null, "tool_calls", 10, 5, 50, false, toolCalls);
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>())).ReturnsAsync(expected);
+
+        var bundle = BuildOrchestrator([p1]);
+        var result = await bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.NotNull(result.ToolCalls);
+        Assert.Single(result.ToolCalls);
+        Assert.Equal("call_1", result.ToolCalls[0].Id);
+        Assert.Equal("fn", result.ToolCalls[0].Function.Name);
+    }
+
+    [Fact]
+    public async Task ToolRequest_CloudModelUnavailable_FinalFallbackThrowsToolNotSupported_InferRouterExceptionThrown()
+    {
+        var p1 = MakeProvider("p1");
+        var fallback = new Mock<IInferenceClient>();
+        fallback.Setup(p => p.Name).Returns("llama");
+        fallback.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
+        var request = MakeRequestWithTools();
+        p1.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(MakeModelUnavailableException());
+        fallback.Setup(p => p.CompleteAsync(request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ProviderException(400, "tool_calling_not_supported",
+                [new ErrorMapping { HttpStatus = 400, InternalCategory = InternalErrorCategory.ModelUnavailable }]));
+
+        var bundle = BuildOrchestrator([p1], finalFallbackMock: fallback);
+        await Assert.ThrowsAsync<InferRouterException>(() =>
+            bundle.Orchestrator.ExecuteAsync(request, CancellationToken.None));
     }
 
     [Fact]

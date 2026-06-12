@@ -24,5 +24,7 @@ public record InferRequest(
     float? Temperature,
     float? TopP,
     float? FrequencyPenalty,
-    float? PresencePenalty
+    float? PresencePenalty,
+    IReadOnlyList<ToolDefinition>? Tools = null,
+    string? ToolChoice = null
 );

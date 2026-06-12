@@ -20,10 +20,11 @@ public record InferResult(
     string RequestId,
     string ProviderName,
     string Model,
-    string Content,
+    string? Content,
     string? FinishReason,
     int PromptTokens,
     int CompletionTokens,
     long LatencyMs,
-    bool WasFallback
+    bool WasFallback,
+    IReadOnlyList<ToolCall>? ToolCalls = null
 );
