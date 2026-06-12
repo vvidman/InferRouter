@@ -21,5 +21,8 @@ public record InferRequest(
     IReadOnlyList<ChatMessage> Messages,
     string? Model,
     int? MaxTokens,
-    float? Temperature
+    float? Temperature,
+    float? TopP,
+    float? FrequencyPenalty,
+    float? PresencePenalty
 );

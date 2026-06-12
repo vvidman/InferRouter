@@ -34,7 +34,7 @@ public class LlamaSharpProviderTests
         new(new ProviderConfig { Name = "local", Type = ProviderType.LocalGguf, ModelPath = modelPath });
 
     private static InferRequest MakeRequest() =>
-        new("req-001", [new ChatMessage("user", "hello")], "local-model", null, null);
+        new("req-001", [new ChatMessage("user", "hello")], "local-model", null, null, null, null, null);
 
     [Fact]
     public async Task CompleteAsync_ModelFileNotFound_ThrowsProviderException_WithModelLoadFailedCode()

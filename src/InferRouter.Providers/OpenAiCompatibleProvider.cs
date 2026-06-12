@@ -70,7 +70,10 @@ public class OpenAiCompatibleProvider : IInferenceClient
                 .Select(m => new ChatRequestMessage { Role = m.Role, Content = m.Content })
                 .ToList(),
             MaxTokens = request.MaxTokens,
-            Temperature = request.Temperature
+            Temperature = request.Temperature,
+            TopP = request.TopP,
+            FrequencyPenalty = request.FrequencyPenalty,
+            PresencePenalty = request.PresencePenalty
         };
 
         var json = JsonSerializer.Serialize(body, SerializerOptions);
@@ -125,6 +128,9 @@ public class OpenAiCompatibleProvider : IInferenceClient
                 .ToList(),
             MaxTokens = request.MaxTokens,
             Temperature = request.Temperature,
+            TopP = request.TopP,
+            FrequencyPenalty = request.FrequencyPenalty,
+            PresencePenalty = request.PresencePenalty,
             Stream = true
         };
 
@@ -215,6 +221,9 @@ public class OpenAiCompatibleProvider : IInferenceClient
         public int? MaxTokens { get; set; }
         public float? Temperature { get; set; }
         public bool? Stream { get; set; }
+        public float? TopP { get; set; }
+        public float? FrequencyPenalty { get; set; }
+        public float? PresencePenalty { get; set; }
     }
 
     private class ChatRequestMessage

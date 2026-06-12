@@ -38,7 +38,7 @@ public class OpenAiCompatibleProviderTests
     };
 
     private static InferRequest MakeRequest() =>
-        new("req-001", [new ChatMessage("user", "hello")], null, null, null);
+        new("req-001", [new ChatMessage("user", "hello")], null, null, null, null, null, null);
 
     private static OpenAiCompatibleProvider MakeProvider(HttpMessageHandler handler)
     {
@@ -130,6 +130,45 @@ public class OpenAiCompatibleProviderTests
         Assert.True(chunks[3].IsLast);
         Assert.Equal(4, chunks[3].PromptTokens);
         Assert.Equal(4, chunks[3].CompletionTokens);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_SamplingParameters_ForwardedInRequestBody()
+    {
+        string? capturedBody = null;
+        var handler = new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"model\":\"gpt-test\",\"choices\":[{\"message\":{\"content\":\"ok\"}}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}",
+                Encoding.UTF8, "application/json")
+        }, async req => capturedBody = await req.Content!.ReadAsStringAsync());
+
+        var provider = MakeProvider(handler);
+        var request = new InferRequest(
+            "req-sampling",
+            [new ChatMessage("user", "hi")],
+            null, null, null,
+            TopP: 0.9f,
+            FrequencyPenalty: 0.5f,
+            PresencePenalty: 0.3f);
+
+        await provider.CompleteAsync(request, CancellationToken.None);
+
+        Assert.NotNull(capturedBody);
+        Assert.Contains("\"top_p\":0.9", capturedBody);
+        Assert.Contains("\"frequency_penalty\":0.5", capturedBody);
+        Assert.Contains("\"presence_penalty\":0.3", capturedBody);
+    }
+
+    private sealed class CapturingHandler(HttpResponseMessage response, Func<HttpRequestMessage, Task> capture) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            await capture(request);
+            return response;
+        }
     }
 
     [Fact]

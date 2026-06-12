@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\InferRouter.Core\InferRouter.Core.csproj" />
     <ProjectReference Include="..\InferRouter.Providers\InferRouter.Providers.csproj" />
+    <ProjectReference Include="..\InferRouter.Api\InferRouter.Api.csproj" />
   </ItemGroup>
 
 </Project>

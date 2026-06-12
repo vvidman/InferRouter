@@ -29,7 +29,10 @@ public class ProviderHealthChecker(
         Messages: [new ChatMessage("user", "hello")],
         Model: null,
         MaxTokens: 1,
-        Temperature: null
+        Temperature: null,
+        TopP: null,
+        FrequencyPenalty: null,
+        PresencePenalty: null
     );
 
     public async Task<IReadOnlyList<ProviderHealthResult>> CheckAllAsync(CancellationToken ct)

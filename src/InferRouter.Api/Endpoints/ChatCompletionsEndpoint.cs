@@ -43,7 +43,10 @@ public class ChatCompletionsEndpoint
                 .ToList(),
             Model: openAiRequest.Model,
             MaxTokens: openAiRequest.MaxTokens,
-            Temperature: openAiRequest.Temperature);
+            Temperature: openAiRequest.Temperature,
+            TopP: openAiRequest.TopP,
+            FrequencyPenalty: openAiRequest.FrequencyPenalty,
+            PresencePenalty: openAiRequest.PresencePenalty);
 
         if (openAiRequest.Stream == true)
             return await HandleStreamingAsync(request, executor, logger, httpContext, ct);

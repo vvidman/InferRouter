@@ -82,7 +82,7 @@ public class ProviderOrchestratorTests
     }
 
     private static InferRequest MakeRequest(string id = "req-001") =>
-        new(id, [new ChatMessage("user", "hello")], "test-model", null, null);
+        new(id, [new ChatMessage("user", "hello")], "test-model", null, null, null, null, null);
 
     private static InferResult MakeResult(string providerName, string requestId = "req-001") =>
         new(requestId, providerName, "test-model", "Hello!", 10, 20, 100, false);
