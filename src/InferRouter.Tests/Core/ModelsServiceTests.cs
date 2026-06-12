@@ -19,7 +19,6 @@ using System.Text;
 using InferRouter.Api.Services;
 using InferRouter.Core.Config;
 using InferRouter.Core.Domain;
-using InferRouter.Core.Interfaces;
 using InferRouter.Core.Services;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -35,10 +34,9 @@ public class ModelsServiceTests
         IHttpClientFactory? httpClientFactory = null,
         SecretReader? secretReader = null)
     {
-        var providers = new List<IInferenceClient>().AsReadOnly();
         httpClientFactory ??= Mock.Of<IHttpClientFactory>();
         secretReader ??= new Mock<SecretReader>(Mock.Of<ILogger<SecretReader>>()) { CallBase = false }.Object;
-        return new ModelsService(providers, configs, hideModels, httpClientFactory, secretReader);
+        return new ModelsService(configs, hideModels, httpClientFactory, secretReader);
     }
 
     private static IReadOnlyList<ProviderConfig> Configs(params (string name, string? model, string? baseUrl)[] entries) =>
@@ -166,6 +164,28 @@ public class ModelsServiceTests
         Assert.Equal(2, result.Data.Count);
         Assert.Contains(result.Data, m => m.Id == "static-model");
         Assert.Contains(result.Data, m => m.Id == "static-model-2");
+    }
+
+    [Fact]
+    public async Task DynamicMode_RequestsSentToCorrectUrl_NoDoubledV1()
+    {
+        var capturedUrls = new List<string>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            capturedUrls.Add(req.RequestUri!.ToString());
+            return ModelListOk(ValidModelListJson);
+        });
+        var httpClient = new HttpClient(handler);
+        var factory = Mock.Of<IHttpClientFactory>(f => f.CreateClient(It.IsAny<string>()) == httpClient);
+
+        var configs = Configs(("groq", "llama3", "https://api.groq.com/openai/v1"));
+        var svc = new ModelsService(configs, hideModels: false, factory, NullSecretReader());
+
+        await svc.GetModelsAsync(CancellationToken.None);
+
+        Assert.Single(capturedUrls);
+        Assert.Equal("https://api.groq.com/openai/v1/models", capturedUrls[0]);
+        Assert.DoesNotContain("/v1/v1/", capturedUrls[0]);
     }
 }
 

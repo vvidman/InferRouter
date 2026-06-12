@@ -22,11 +22,11 @@ namespace InferRouter.Api.Models;
 public record OpenAiChatRequest(
     [property: JsonPropertyName("model")] string Model,
     [property: JsonPropertyName("messages")] List<OpenAiMessage> Messages,
-    [property: JsonPropertyName("max_tokens")] int? MaxTokens,
-    [property: JsonPropertyName("temperature")] float? Temperature,
-    [property: JsonPropertyName("stream")] bool? Stream,
-    [property: JsonPropertyName("top_p")] float? TopP,
-    [property: JsonPropertyName("frequency_penalty")] float? FrequencyPenalty,
-    [property: JsonPropertyName("presence_penalty")] float? PresencePenalty,
+    [property: JsonPropertyName("max_tokens")] int? MaxTokens = null,
+    [property: JsonPropertyName("temperature")] float? Temperature = null,
+    [property: JsonPropertyName("stream")] bool? Stream = null,
+    [property: JsonPropertyName("top_p")] float? TopP = null,
+    [property: JsonPropertyName("frequency_penalty")] float? FrequencyPenalty = null,
+    [property: JsonPropertyName("presence_penalty")] float? PresencePenalty = null,
     [property: JsonPropertyName("tools")] List<OpenAiToolDefinition>? Tools = null,
     [property: JsonPropertyName("tool_choice")] string? ToolChoice = null);

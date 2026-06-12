@@ -226,7 +226,6 @@ builder.Services.AddSingleton(sp => new StatsService(
     options.OperationLogPath));
 
 builder.Services.AddSingleton(sp => new ModelsService(
-    sp.GetRequiredService<IReadOnlyList<IInferenceClient>>(),
     options.Providers.AsReadOnly(),
     options.HideModels,
     sp.GetRequiredService<IHttpClientFactory>(),

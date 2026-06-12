@@ -18,19 +18,16 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using InferRouter.Core.Config;
 using InferRouter.Core.Domain;
-using InferRouter.Core.Interfaces;
 using InferRouter.Core.Services;
 
 namespace InferRouter.Api.Services;
 
 public class ModelsService(
-    IReadOnlyList<IInferenceClient> providers,
     IReadOnlyList<ProviderConfig> providerConfigs,
     bool hideModels,
     IHttpClientFactory httpClientFactory,
     SecretReader secretReader)
 {
-    private readonly IReadOnlyList<IInferenceClient> _providers = providers;
 
     public async Task<ModelListResponse> GetModelsAsync(CancellationToken ct)
     {
@@ -50,7 +47,7 @@ public class ModelsService(
 
                 var request = new HttpRequestMessage(
                     HttpMethod.Get,
-                    $"{config.BaseUrl.TrimEnd('/')}/v1/models");
+                    $"{config.BaseUrl.TrimEnd('/')}/models");
 
                 if (apiKey != null)
                     request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
