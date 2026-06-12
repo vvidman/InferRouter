@@ -16,6 +16,7 @@
 
 using InferRouter.Api;
 using InferRouter.Api.Endpoints;
+using InferRouter.Api.Services;
 using InferRouter.Core.Domain;
 using InferRouter.Core.Interfaces;
 using InferRouter.Core.Services;
@@ -224,6 +225,13 @@ builder.Services.AddSingleton(sp => new StatsService(
     sp.GetRequiredService<IInferenceClient>(),
     options.OperationLogPath));
 
+builder.Services.AddSingleton(sp => new ModelsService(
+    sp.GetRequiredService<IReadOnlyList<IInferenceClient>>(),
+    options.Providers.AsReadOnly(),
+    options.HideModels,
+    sp.GetRequiredService<IHttpClientFactory>(),
+    sp.GetRequiredService<SecretReader>()));
+
 var app = builder.Build();
 
 // Startup validation 9: strategy-specific warnings (logged, do not block startup)
@@ -246,6 +254,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
 ChatCompletionsEndpoint.Map(app);
 HealthProvidersEndpoint.Map(app);
 StatsEndpoint.Map(app);
+ModelsEndpoint.Map(app);
 
 app.Run();
 return 0;
