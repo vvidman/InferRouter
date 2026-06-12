@@ -21,4 +21,4 @@ namespace InferRouter.Api.Models;
 public record OpenAiChoice(
     [property: JsonPropertyName("index")] int Index,
     [property: JsonPropertyName("message")] OpenAiMessage Message,
-    [property: JsonPropertyName("finish_reason")] string FinishReason);
+    [property: JsonPropertyName("finish_reason")] string? FinishReason);

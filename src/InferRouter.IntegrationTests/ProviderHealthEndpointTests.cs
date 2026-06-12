@@ -34,7 +34,7 @@ public class ProviderHealthAllOkFactory : InferRouterWebAppFactory
         base.ConfigureWebHost(builder);
         builder.ConfigureTestServices(services =>
         {
-            var okResult = new InferResult("hc", "test-provider", "test-model", "ok", 0, 0, 0, false);
+            var okResult = new InferResult("hc", "test-provider", "test-model", "ok", "stop", 0, 0, 0, false);
 
             var cloud = new Mock<IInferenceClient>();
             cloud.Setup(p => p.Name).Returns("test-provider");
@@ -77,7 +77,7 @@ public class ProviderHealthCloudAuthErrorFactory : InferRouterWebAppFactory
             local.Setup(p => p.Name).Returns("test-local");
             local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
             local.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new InferResult("hc", "test-local", "local-model", "ok", 0, 0, 0, false));
+                .ReturnsAsync(new InferResult("hc", "test-local", "local-model", "ok", "stop", 0, 0, 0, false));
 
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
                 new List<IInferenceClient> { cloud.Object }.AsReadOnly());

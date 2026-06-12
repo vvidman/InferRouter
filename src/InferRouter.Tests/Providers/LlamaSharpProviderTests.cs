@@ -142,11 +142,44 @@ public class LlamaSharpProviderTests
     }
 
     [Fact]
+    public async Task CompleteAsync_AlwaysReturnsStopFinishReason()
+    {
+        var request = MakeRequest();
+        var inferResult = new InferResult("req-001", "local", "model.gguf", "hi", "stop", 0, 0, 0, false);
+        using var provider = new TestableLlamaSharpProvider(
+            new ProviderConfig { Name = "local", Type = ProviderType.LocalGguf, ModelPath = "/tmp/nonexistent.gguf" },
+            inferResult);
+
+        var result = await provider.CompleteAsync(request, CancellationToken.None);
+
+        Assert.Equal("stop", result.FinishReason);
+    }
+
+    [Fact]
+    public async Task CompleteStreamingAsync_FinalChunkHasStopFinishReason()
+    {
+        const string content = "hello world";
+        var request = MakeRequest();
+        var inferResult = new InferResult("req-001", "local", "model.gguf", content, "stop", 2, 3, 0, false);
+        using var provider = new TestableLlamaSharpProvider(
+            new ProviderConfig { Name = "local", Type = ProviderType.LocalGguf, ModelPath = "/tmp/nonexistent.gguf" },
+            inferResult);
+
+        var chunks = new List<StreamChunk>();
+        await foreach (var chunk in provider.CompleteStreamingAsync(request, CancellationToken.None))
+            chunks.Add(chunk);
+
+        var last = chunks.Last();
+        Assert.True(last.IsLast);
+        Assert.Equal("stop", last.FinishReason);
+    }
+
+    [Fact]
     public async Task CompleteStreamingAsync_YieldsContentChunksAndFinalChunkWithTokenCounts()
     {
         const string content = "The quick brown fox jumps over the lazy dog";
         var request = MakeRequest();
-        var inferResult = new InferResult("req-001", "local", "model.gguf", content, 10, 20, 0, false);
+        var inferResult = new InferResult("req-001", "local", "model.gguf", content, "stop", 10, 20, 0, false);
         using var provider = new TestableLlamaSharpProvider(
             new ProviderConfig { Name = "local", Type = ProviderType.LocalGguf, ModelPath = "/tmp/nonexistent.gguf" },
             inferResult);
@@ -175,7 +208,7 @@ public class LlamaSharpProviderTests
     public async Task CompleteStreamingAsync_EmptyContent_YieldsOnlyFinalChunk()
     {
         var request = MakeRequest();
-        var inferResult = new InferResult("req-001", "local", "model.gguf", "", 5, 0, 0, false);
+        var inferResult = new InferResult("req-001", "local", "model.gguf", "", "stop", 5, 0, 0, false);
         using var provider = new TestableLlamaSharpProvider(
             new ProviderConfig { Name = "local", Type = ProviderType.LocalGguf, ModelPath = "/tmp/nonexistent.gguf" },
             inferResult);

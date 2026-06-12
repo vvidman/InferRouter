@@ -60,12 +60,13 @@ public class ChatCompletionsEndpoint
                 Object: "chat.completion",
                 Created: DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 Model: result.Model,
+                SystemFingerprint: "fp_" + result.RequestId[..Math.Min(8, result.RequestId.Length)],
                 Choices:
                 [
                     new OpenAiChoice(
                         Index: 0,
                         Message: new OpenAiMessage("assistant", result.Content),
-                        FinishReason: "stop")
+                        FinishReason: result.FinishReason ?? "stop")
                 ],
                 Usage: new OpenAiUsage(
                     result.PromptTokens,
@@ -121,7 +122,7 @@ public class ChatCompletionsEndpoint
                         new SseChunkChoice(
                             Index: 0,
                             Delta: new SseChunkDelta(Content: chunk.Delta),
-                            FinishReason: chunk.IsLast ? "stop" : null)
+                            FinishReason: chunk.FinishReason)
                     ]);
 
                 await response.WriteAsync($"data: {JsonSerializer.Serialize(chunkResponse)}\n\n", ct);

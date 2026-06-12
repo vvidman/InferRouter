@@ -102,6 +102,7 @@ public class OpenAiCompatibleProvider : IInferenceClient
             ProviderName: _config.Name,
             Model: chatResponse.Model,
             Content: chatResponse.Choices[0].Message.Content,
+            FinishReason: chatResponse.Choices.Count > 0 ? chatResponse.Choices[0].FinishReason : null,
             PromptTokens: chatResponse.Usage.PromptTokens,
             CompletionTokens: chatResponse.Usage.CompletionTokens,
             LatencyMs: sw.ElapsedMilliseconds,
@@ -156,6 +157,7 @@ public class OpenAiCompatibleProvider : IInferenceClient
             using var reader = new StreamReader(stream);
 
             StreamChunk? pending = null;
+            string? lastFinishReason = null;
 
             while (await reader.ReadLineAsync(ct) is { } line)
             {
@@ -167,12 +169,16 @@ public class OpenAiCompatibleProvider : IInferenceClient
                 if (data == "[DONE]")
                 {
                     if (pending is not null)
-                        yield return pending with { IsLast = true };
+                        yield return pending with { IsLast = true, FinishReason = pending.FinishReason ?? lastFinishReason };
                     yield break;
                 }
 
                 var sseChunk = JsonSerializer.Deserialize<SseChatChunk>(data, SerializerOptions);
                 if (sseChunk is null) continue;
+
+                var finishReason = sseChunk.Choices.Count > 0 ? sseChunk.Choices[0].FinishReason : null;
+                if (finishReason is not null)
+                    lastFinishReason = finishReason;
 
                 var delta = sseChunk.Choices.Count > 0
                     ? sseChunk.Choices[0].Delta.Content ?? ""
@@ -186,11 +192,12 @@ public class OpenAiCompatibleProvider : IInferenceClient
                     Delta: delta,
                     IsLast: false,
                     PromptTokens: sseChunk.Usage?.PromptTokens,
-                    CompletionTokens: sseChunk.Usage?.CompletionTokens);
+                    CompletionTokens: sseChunk.Usage?.CompletionTokens,
+                    FinishReason: finishReason);
             }
 
             if (pending is not null)
-                yield return pending with { IsLast = true };
+                yield return pending with { IsLast = true, FinishReason = pending.FinishReason ?? lastFinishReason };
         }
     }
 
@@ -242,6 +249,7 @@ public class OpenAiCompatibleProvider : IInferenceClient
     private class ChatResponseChoice
     {
         public ChatResponseMessage Message { get; set; } = new();
+        [JsonPropertyName("finish_reason")] public string? FinishReason { get; set; }
     }
 
     private class ChatResponseMessage
@@ -264,6 +272,7 @@ public class OpenAiCompatibleProvider : IInferenceClient
     private class SseChoice
     {
         public SseDelta Delta { get; set; } = new();
+        [JsonPropertyName("finish_reason")] public string? FinishReason { get; set; }
     }
 
     private class SseDelta

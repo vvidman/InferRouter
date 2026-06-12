@@ -21,6 +21,7 @@ public record InferResult(
     string ProviderName,
     string Model,
     string Content,
+    string? FinishReason,
     int PromptTokens,
     int CompletionTokens,
     long LatencyMs,

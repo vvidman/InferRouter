@@ -42,7 +42,7 @@ public class ChatCompletionsSuccessFactory : InferRouterWebAppFactory
             cloud.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
             cloud.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new InferResult("req-1", "test-provider", "test-model",
-                    "Hello!", 10, 5, 50, false));
+                    "Hello!", "stop", 10, 5, 50, false));
 
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
                 new List<IInferenceClient> { cloud.Object }.AsReadOnly());
@@ -104,7 +104,7 @@ public class ChatCompletionsFallbackFactory : InferRouterWebAppFactory
             local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
             local.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new InferResult("req-fb", "test-local", "local-model",
-                    "Fallback response", 8, 4, 200, true));
+                    "Fallback response", "stop", 8, 4, 200, true));
 
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
                 new List<IInferenceClient> { cloud.Object }.AsReadOnly());
@@ -134,6 +134,35 @@ public class ChatCompletionsEndpointTests(ChatCompletionsSuccessFactory factory)
         Assert.True(root.TryGetProperty("model", out _));
         Assert.True(root.TryGetProperty("choices", out _));
         Assert.True(root.TryGetProperty("usage", out _));
+    }
+
+    [Fact]
+    public async Task ValidRequest_ProviderSucceeds_ResponseContainsSystemFingerprint()
+    {
+        var client = factory.CreateClient();
+        var response = await client.PostAsync("/v1/chat/completions",
+            JsonBody("""{"model":"test-model","messages":[{"role":"user","content":"hi"}]}"""));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.True(doc.RootElement.TryGetProperty("system_fingerprint", out var fp));
+        Assert.StartsWith("fp_", fp.GetString());
+    }
+
+    [Fact]
+    public async Task ValidRequest_ProviderSucceeds_ChoicesContainFinishReason()
+    {
+        var client = factory.CreateClient();
+        var response = await client.PostAsync("/v1/chat/completions",
+            JsonBody("""{"model":"test-model","messages":[{"role":"user","content":"hi"}]}"""));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var finishReason = doc.RootElement
+            .GetProperty("choices")[0]
+            .GetProperty("finish_reason")
+            .GetString();
+        Assert.NotNull(finishReason);
     }
 
     [Fact]

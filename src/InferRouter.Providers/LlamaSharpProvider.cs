@@ -85,6 +85,7 @@ public partial class LlamaSharpProvider : IInferenceClient, IDisposable
                     ProviderName: _config.Name,
                     Model: Path.GetFileName(_config.ModelPath) ?? "",
                     Content: sb.ToString().Trim(),
+                    FinishReason: "stop",
                     PromptTokens: 0,
                     CompletionTokens: 0,
                     LatencyMs: sw.ElapsedMilliseconds,
@@ -130,7 +131,8 @@ public partial class LlamaSharpProvider : IInferenceClient, IDisposable
             Delta: "",
             IsLast: true,
             PromptTokens: result.PromptTokens,
-            CompletionTokens: result.CompletionTokens);
+            CompletionTokens: result.CompletionTokens,
+            FinishReason: "stop");
     }
 
     [GeneratedRegex(@"\S+\s*")]

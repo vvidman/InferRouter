@@ -85,7 +85,7 @@ public class ProviderOrchestratorTests
         new(id, [new ChatMessage("user", "hello")], "test-model", null, null, null, null, null);
 
     private static InferResult MakeResult(string providerName, string requestId = "req-001") =>
-        new(requestId, providerName, "test-model", "Hello!", 10, 20, 100, false);
+        new(requestId, providerName, "test-model", "Hello!", "stop", 10, 20, 100, false);
 
     private static ProviderException MakeRateLimitException() =>
         new(429, null, [new ErrorMapping { HttpStatus = 429, InternalCategory = InternalErrorCategory.RateLimit }]);

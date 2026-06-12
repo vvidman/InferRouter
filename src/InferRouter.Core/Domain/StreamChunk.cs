@@ -22,5 +22,6 @@ public record StreamChunk(
     bool IsLast,
     int? PromptTokens,
     int? CompletionTokens,
-    string Model = ""
+    string Model = "",
+    string? FinishReason = null
 );

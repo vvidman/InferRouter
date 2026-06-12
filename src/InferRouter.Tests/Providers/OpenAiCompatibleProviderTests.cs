@@ -172,6 +172,47 @@ public class OpenAiCompatibleProviderTests
     }
 
     [Fact]
+    public async Task CompleteAsync_FinishReasonLength_PropagatedToInferResult()
+    {
+        var responseJson =
+            "{\"model\":\"gpt-test\",\"choices\":[{\"message\":{\"content\":\"truncated\"},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":10}}";
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+        };
+
+        var provider = MakeProvider(new FakeHandler(response));
+        var result = await provider.CompleteAsync(MakeRequest(), CancellationToken.None);
+
+        Assert.Equal("length", result.FinishReason);
+    }
+
+    [Fact]
+    public async Task CompleteStreamingAsync_LastChunkHasFinishReasonStop_PropagatedToFinalStreamChunk()
+    {
+        const string sseBody =
+            "data: {\"id\":\"c1\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}],\"usage\":null}\n" +
+            "\n" +
+            "data: {\"id\":\"c2\",\"choices\":[{\"delta\":{\"content\":\"\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}\n" +
+            "\n" +
+            "data: [DONE]\n";
+
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(sseBody, Encoding.UTF8, "text/event-stream")
+        };
+
+        var provider = MakeProvider(new FakeHandler(response));
+        var chunks = new List<StreamChunk>();
+        await foreach (var chunk in provider.CompleteStreamingAsync(MakeRequest(), CancellationToken.None))
+            chunks.Add(chunk);
+
+        var last = chunks.Last();
+        Assert.True(last.IsLast);
+        Assert.Equal("stop", last.FinishReason);
+    }
+
+    [Fact]
     public async Task CompleteStreamingAsync_NonSuccessStatusBeforeStreaming_ThrowsProviderException()
     {
         var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests)

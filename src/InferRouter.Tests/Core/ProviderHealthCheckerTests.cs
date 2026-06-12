@@ -37,7 +37,7 @@ public class ProviderHealthCheckerTests
     }
 
     private static InferResult MakeResult(string providerName) =>
-        new("health-check", providerName, "test-model", "hi", 1, 1, 10, false);
+        new("health-check", providerName, "test-model", "hi", "stop", 1, 1, 10, false);
 
     private static ProviderException MakeException(int status, InternalErrorCategory category) =>
         new(status, null, [new ErrorMapping { HttpStatus = status, InternalCategory = category }]);
