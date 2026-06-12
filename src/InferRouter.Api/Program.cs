@@ -213,7 +213,10 @@ builder.Services.AddSingleton<IRoutingStrategy>(sp =>
 });
 
 builder.Services.AddSingleton<ProviderOrchestrator>();
-builder.Services.AddSingleton<ProviderHealthChecker>();
+builder.Services.AddSingleton<ProviderHealthChecker>(sp => new ProviderHealthChecker(
+    sp.GetRequiredService<IReadOnlyList<IInferenceClient>>(),
+    sp.GetRequiredService<IInferenceClient>(),
+    sp.GetRequiredService<ErrorNormalizer>()));
 
 builder.Services.AddSingleton(sp => new StatsService(
     sp.GetRequiredService<IRateLimitTracker>(),

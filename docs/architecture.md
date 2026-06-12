@@ -327,6 +327,7 @@ All methods append a single JSONL line to `{logDirectory}/operations-{yyyy-MM-dd
 ```csharp
 public class ProviderHealthChecker(
     IReadOnlyList<IInferenceClient> providers,
+    IInferenceClient finalFallback,
     ErrorNormalizer errorNormalizer)
 {
     // Probes every provider with a minimal 1-token request and returns a health result per provider.

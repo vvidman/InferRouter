@@ -22,6 +22,7 @@ namespace InferRouter.Core.Services;
 
 public class ProviderHealthChecker(
     IReadOnlyList<IInferenceClient> providers,
+    IInferenceClient finalFallback,
     ErrorNormalizer errorNormalizer)
 {
     private static readonly InferRequest HealthCheckRequest = new(
@@ -37,11 +38,10 @@ public class ProviderHealthChecker(
 
     public async Task<IReadOnlyList<ProviderHealthResult>> CheckAllAsync(CancellationToken ct)
     {
-        var results = new List<ProviderHealthResult>(providers.Count);
+        var results = new List<ProviderHealthResult>(providers.Count + 1);
         foreach (var provider in providers)
-        {
             results.Add(await CheckProviderAsync(provider, ct));
-        }
+        results.Add(await CheckProviderAsync(finalFallback, ct));
         return results;
     }
 

@@ -25,8 +25,18 @@ namespace InferRouter.Tests.Core;
 
 public class ProviderHealthCheckerTests
 {
-    private static ProviderHealthChecker BuildChecker(params Mock<IInferenceClient>[] mocks) =>
-        new(mocks.Select(m => m.Object).ToList(), new ErrorNormalizer());
+    private static ProviderHealthChecker BuildChecker(
+        Mock<IInferenceClient> finalFallback,
+        params Mock<IInferenceClient>[] cloudMocks) =>
+        new(cloudMocks.Select(m => m.Object).ToList(), finalFallback.Object, new ErrorNormalizer());
+
+    private static Mock<IInferenceClient> MakeDefaultFallback()
+    {
+        var m = MakeProvider("final-fallback");
+        m.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+         .ReturnsAsync(MakeResult("final-fallback"));
+        return m;
+    }
 
     private static Mock<IInferenceClient> MakeProvider(string name)
     {
@@ -49,10 +59,9 @@ public class ProviderHealthCheckerTests
         p.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
          .ReturnsAsync(MakeResult("groq"));
 
-        var checker = BuildChecker(p);
+        var checker = BuildChecker(MakeDefaultFallback(), p);
         var results = await checker.CheckAllAsync(CancellationToken.None);
 
-        Assert.Single(results);
         Assert.Equal("groq", results[0].ProviderName);
         Assert.Equal("ok", results[0].Status);
         Assert.Null(results[0].HttpStatus);
@@ -66,10 +75,9 @@ public class ProviderHealthCheckerTests
         p.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
          .ThrowsAsync(MakeException(401, InternalErrorCategory.AuthError));
 
-        var checker = BuildChecker(p);
+        var checker = BuildChecker(MakeDefaultFallback(), p);
         var results = await checker.CheckAllAsync(CancellationToken.None);
 
-        Assert.Single(results);
         Assert.Equal("auth_error", results[0].Status);
         Assert.Equal(401, results[0].HttpStatus);
     }
@@ -81,7 +89,7 @@ public class ProviderHealthCheckerTests
         p.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
          .ThrowsAsync(MakeException(429, InternalErrorCategory.RateLimit));
 
-        var checker = BuildChecker(p);
+        var checker = BuildChecker(MakeDefaultFallback(), p);
         var results = await checker.CheckAllAsync(CancellationToken.None);
 
         Assert.Equal("rate_limit", results[0].Status);
@@ -95,7 +103,7 @@ public class ProviderHealthCheckerTests
         p.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
          .ThrowsAsync(MakeException(500, InternalErrorCategory.ServerError));
 
-        var checker = BuildChecker(p);
+        var checker = BuildChecker(MakeDefaultFallback(), p);
         var results = await checker.CheckAllAsync(CancellationToken.None);
 
         Assert.Equal("server_error", results[0].Status);
@@ -109,7 +117,7 @@ public class ProviderHealthCheckerTests
         p.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
          .ThrowsAsync(new HttpRequestException("network failure"));
 
-        var checker = BuildChecker(p);
+        var checker = BuildChecker(MakeDefaultFallback(), p);
         var results = await checker.CheckAllAsync(CancellationToken.None);
 
         Assert.Equal("unknown_error", results[0].Status);
@@ -130,7 +138,7 @@ public class ProviderHealthCheckerTests
         p3.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
           .ThrowsAsync(MakeException(429, InternalErrorCategory.RateLimit));
 
-        var checker = BuildChecker(p1, p2, p3);
+        var checker = BuildChecker(p3, p1, p2);
         var results = await checker.CheckAllAsync(CancellationToken.None);
 
         Assert.Equal(3, results.Count);
@@ -152,7 +160,7 @@ public class ProviderHealthCheckerTests
          .Callback<InferRequest, CancellationToken>((req, _) => captured = req)
          .ReturnsAsync(MakeResult("groq"));
 
-        var checker = BuildChecker(p);
+        var checker = BuildChecker(MakeDefaultFallback(), p);
         await checker.CheckAllAsync(CancellationToken.None);
 
         Assert.NotNull(captured);
@@ -168,7 +176,7 @@ public class ProviderHealthCheckerTests
         p.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
          .ThrowsAsync(new OperationCanceledException());
 
-        var checker = BuildChecker(p);
+        var checker = BuildChecker(MakeDefaultFallback(), p);
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
             checker.CheckAllAsync(CancellationToken.None));
     }
@@ -181,7 +189,7 @@ public class ProviderHealthCheckerTests
          .ReturnsAsync(MakeResult("groq"));
         var tracker = new Mock<IRateLimitTracker>();
 
-        var checker = BuildChecker(p);
+        var checker = BuildChecker(MakeDefaultFallback(), p);
         await checker.CheckAllAsync(CancellationToken.None);
 
         tracker.VerifyNoOtherCalls();
@@ -198,7 +206,7 @@ public class ProviderHealthCheckerTests
 
         try
         {
-            var checker = BuildChecker(p);
+            var checker = BuildChecker(MakeDefaultFallback(), p);
             await checker.CheckAllAsync(CancellationToken.None);
 
             Assert.Empty(Directory.GetFiles(logDir));
@@ -207,5 +215,60 @@ public class ProviderHealthCheckerTests
         {
             Directory.Delete(logDir, true);
         }
+    }
+
+    [Fact]
+    public async Task TwoCloudProvidersAndOneFinalFallback_ReturnsThreeResults()
+    {
+        var p1 = MakeProvider("groq");
+        var p2 = MakeProvider("gemini");
+        var fb = MakeProvider("llamasharp");
+
+        p1.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+          .ReturnsAsync(MakeResult("groq"));
+        p2.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+          .ReturnsAsync(MakeResult("gemini"));
+        fb.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+          .ReturnsAsync(MakeResult("llamasharp"));
+
+        var checker = BuildChecker(fb, p1, p2);
+        var results = await checker.CheckAllAsync(CancellationToken.None);
+
+        Assert.Equal(3, results.Count);
+    }
+
+    [Fact]
+    public async Task FinalFallback_LastResultNameMatchesFinalFallbackName()
+    {
+        var p = MakeProvider("groq");
+        var fb = MakeProvider("llamasharp");
+
+        p.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+         .ReturnsAsync(MakeResult("groq"));
+        fb.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+          .ReturnsAsync(MakeResult("llamasharp"));
+
+        var checker = BuildChecker(fb, p);
+        var results = await checker.CheckAllAsync(CancellationToken.None);
+
+        Assert.Equal("llamasharp", results[^1].ProviderName);
+    }
+
+    [Fact]
+    public async Task FinalFallback_ThrowsProviderException_ReturnsCorrectStatus_NotThrown()
+    {
+        var p = MakeProvider("groq");
+        var fb = MakeProvider("llamasharp");
+
+        p.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+         .ReturnsAsync(MakeResult("groq"));
+        fb.Setup(x => x.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+          .ThrowsAsync(MakeException(503, InternalErrorCategory.ServerError));
+
+        var checker = BuildChecker(fb, p);
+        var results = await checker.CheckAllAsync(CancellationToken.None);
+
+        Assert.Equal("server_error", results[^1].Status);
+        Assert.Equal(503, results[^1].HttpStatus);
     }
 }

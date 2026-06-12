@@ -99,8 +99,48 @@ public class ProviderHealthAllFailFactory : InferRouterWebAppFactory
             cloud.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new InvalidOperationException("provider unavailable"));
 
+            var local = new Mock<IInferenceClient>();
+            local.Setup(p => p.Name).Returns("test-local");
+            local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
+            local.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("local unavailable"));
+
             services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
                 new List<IInferenceClient> { cloud.Object }.AsReadOnly());
+            services.AddSingleton<IInferenceClient>(_ => local.Object);
+        });
+    }
+}
+
+public class ProviderHealthFinalFallbackServerErrorFactory : InferRouterWebAppFactory
+{
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.ConfigureTestServices(services =>
+        {
+            var okResult = new InferResult("hc", "test-provider", "test-model", "ok", "stop", 0, 0, 0, false);
+
+            var cloud = new Mock<IInferenceClient>();
+            cloud.Setup(p => p.Name).Returns("test-provider");
+            cloud.Setup(p => p.Type).Returns(ProviderType.OpenAiCompatible);
+            cloud.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(okResult);
+
+            var serverErrorMappings = new List<ErrorMapping>
+            {
+                new() { HttpStatus = 503, InternalCategory = InternalErrorCategory.ServerError }
+            }.AsReadOnly();
+
+            var local = new Mock<IInferenceClient>();
+            local.Setup(p => p.Name).Returns("test-local");
+            local.Setup(p => p.Type).Returns(ProviderType.LocalGguf);
+            local.Setup(p => p.CompleteAsync(It.IsAny<InferRequest>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new ProviderException(503, null, serverErrorMappings));
+
+            services.AddSingleton<IReadOnlyList<IInferenceClient>>(_ =>
+                new List<IInferenceClient> { cloud.Object }.AsReadOnly());
+            services.AddSingleton<IInferenceClient>(_ => local.Object);
         });
     }
 }
@@ -117,7 +157,7 @@ public class ProviderHealthEndpointTests(ProviderHealthAllOkFactory factory)
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var providers = doc.RootElement.GetProperty("providers").EnumerateArray().ToList();
-        Assert.Single(providers);
+        Assert.Equal(2, providers.Count);
         Assert.All(providers, p =>
             Assert.Equal("ok", p.GetProperty("status").GetString()));
     }
@@ -154,8 +194,44 @@ public class ProviderHealthEndpointTests_AllFail(ProviderHealthAllFailFactory fa
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var providers = doc.RootElement.GetProperty("providers").EnumerateArray().ToList();
-        Assert.Single(providers);
+        Assert.Equal(2, providers.Count);
         Assert.All(providers, p =>
             Assert.NotEqual("ok", p.GetProperty("status").GetString()));
+    }
+}
+
+public class ProviderHealthEndpointTests_FinalFallbackIncluded(ProviderHealthAllOkFactory factory)
+    : IClassFixture<ProviderHealthAllOkFactory>
+{
+    [Fact]
+    public async Task ResponseIncludesFinalFallbackAsLastEntry()
+    {
+        var client = factory.CreateClient();
+        var response = await client.GetAsync("/health/providers");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var providers = doc.RootElement.GetProperty("providers").EnumerateArray().ToList();
+        Assert.Equal(2, providers.Count);
+        Assert.Equal("test-local", providers[^1].GetProperty("name").GetString());
+    }
+}
+
+public class ProviderHealthEndpointTests_FinalFallbackServerError(ProviderHealthFinalFallbackServerErrorFactory factory)
+    : IClassFixture<ProviderHealthFinalFallbackServerErrorFactory>
+{
+    [Fact]
+    public async Task FinalFallbackServerError_Returns200_FinalFallbackEntryHasServerErrorStatus()
+    {
+        var client = factory.CreateClient();
+        var response = await client.GetAsync("/health/providers");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var providers = doc.RootElement.GetProperty("providers").EnumerateArray()
+            .ToDictionary(p => p.GetProperty("name").GetString()!);
+
+        Assert.Equal("server_error", providers["test-local"].GetProperty("status").GetString());
+        Assert.Equal(503, providers["test-local"].GetProperty("http_status").GetInt32());
     }
 }
